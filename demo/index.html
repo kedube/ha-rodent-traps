@@ -52,6 +52,7 @@
   .card-host { width: 100%; transition: max-width .3s ease; }
   .panel { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 12px; padding: 14px; position: sticky; top: 20px; }
   .panel h2 { font-size: 14px; font-weight: 500; margin: 0 0 10px; }
+  .tip { font-size: 12px; color: var(--secondary-text-color); margin: -4px 0 10px; }
   .trap-ctl { border-top: 1px solid var(--divider-color); padding: 10px 0; }
   .trap-ctl:first-of-type { border-top: 0; padding-top: 0; }
   .trap-ctl strong { font-size: 13px; font-weight: 500; display: block; margin-bottom: 6px; }
@@ -98,6 +99,7 @@
   <div class="stage"><div class="card-host" id="host"></div></div>
   <aside class="panel">
     <h2>Simulate events</h2>
+    <p class="tip">Readings with a corner mark have a hold action. Press and hold them, or right-click.</p>
     <div id="controls"></div>
   </aside>
 </main>
@@ -118,7 +120,36 @@
     };
   }
 
-  // Garage: armed and healthy.
+  // Entity and device registries, as the Home Assistant frontend exposes them.
+  const areas = { attic: { area_id: "attic", name: "Attic" } };
+  const devices = {};
+  const entities = {};
+  function goodnature(n, name, opts = {}) {
+    const id = `gn${n}`;
+    const p = `goodnature_trap_${n}`;
+    devices[id] = { id, name: `Goodnature Trap ${n}`, name_by_user: name, manufacturer: "Goodnature", model: "A24 Chirp", area_id: "attic" };
+    const add = (entity_id, state, attrs = {}, ago = 0) => {
+      set(entity_id, state, { friendly_name: `${name} ${attrs.label}`, ...attrs, label: undefined }, ago);
+      entities[entity_id] = { entity_id, device_id: id, platform: "zwave_js" };
+    };
+    add(`sensor.${p}_strikes`, opts.strikes ?? 7, { label: "Strikes", state_class: "total_increasing" }, 60 * 72);
+    add(`event.${p}_strike`, minutesAgo(60 * 72), { label: "Strike", event_type: "strike" }, 60 * 72);
+    add(`binary_sensor.${p}_kill_alert`, "off", { label: "Kill alert" }, 60 * 70);
+    add(`binary_sensor.${p}_trap_armed`, opts.armed ?? "on", { label: "Trap armed" }, 60 * 70);
+    add(`binary_sensor.${p}_re_arm_required`, "off", { label: "Re-arm required", device_class: "problem" }, 60 * 70);
+    add(`sensor.${p}_battery`, opts.battery ?? 86, { label: "Battery", unit_of_measurement: "%", device_class: "battery" });
+    add(`binary_sensor.${p}_battery_low`, "off", { label: "Battery low", device_class: "battery" });
+    add(`sensor.${p}_lure_remaining`, opts.lure ?? 178.9, { label: "Lure remaining", unit_of_measurement: "d", device_class: "duration" });
+    add(`number.${p}_lure_life`, 180, { label: "Lure life", unit_of_measurement: "d", min: 1, max: 365 });
+    add(`binary_sensor.${p}_lure_due`, opts.lureDue ?? "off", { label: "Lure due" });
+    add(`sensor.${p}_node_status`, "asleep", { label: "Node status" }, 60 * 11);
+    add(`sensor.${p}_last_seen`, minutesAgo(opts.seen ?? 60 * 11), { label: "Last seen", device_class: "timestamp" });
+    add(`button.${p}_clear_kill_alert`, "unknown", { label: "Clear kill alert" });
+    add(`button.${p}_lure_replaced`, "unknown", { label: "Lure replaced" });
+    add(`button.${p}_ping`, "unknown", { label: "Ping" });
+  }
+
+  // Garage: snap trap, armed and healthy.
   set("sensor.garage_trap_strikes", 7, { unit_of_measurement: "strikes" }, 60 * 30);
   set("sensor.garage_trap_battery", 82, { unit_of_measurement: "%", device_class: "battery" });
   set("binary_sensor.garage_trap_kill", "off", { device_class: "occupancy" }, 60 * 30);
@@ -132,25 +163,25 @@
   set("sensor.basement_trap_bait", 40, { unit_of_measurement: "%" });
   set("binary_sensor.basement_trap_online", "on", { device_class: "connectivity" }, 60 * 72);
   set("binary_sensor.basement_trap_rearm", "on", { device_class: "problem" }, 18);
-  // Attic: low battery, low bait (text state).
-  set("sensor.attic_trap_strikes", 3, { unit_of_measurement: "strikes" });
-  set("sensor.attic_trap_battery", 9, { unit_of_measurement: "%", device_class: "battery" });
-  set("binary_sensor.attic_trap_kill", "off", {});
-  set("input_select.attic_trap_bait", "Low", { options: ["Full", "Half", "Low", "Empty"] });
-  set("binary_sensor.attic_trap_online", "on", { device_class: "connectivity" });
-  // Kitchen: sprung without a catch (status text sensor), binary battery.
+  // Mousetraps 1 and 2: Goodnature devices set up with `device:` only.
+  goodnature(1, "Mousetrap 1");
+  goodnature(2, "Mousetrap 2", { armed: "off", lure: 12.4, lureDue: "on", strikes: 2, seen: 95 });
+  // Kitchen: bait station, sprung, with a button on the tile.
   set("sensor.kitchen_trap_status", "sprung", {}, 95);
   set("binary_sensor.kitchen_trap_battery_low", "off", { device_class: "battery" });
   set("sensor.kitchen_trap_bait", 100, { unit_of_measurement: "%" });
-  // Shed: offline — its entities went unavailable 3 hours ago.
-  set("sensor.shed_trap_strikes", "unavailable", {}, 180);
-  set("sensor.shed_trap_battery", "unavailable", {}, 180);
-  set("binary_sensor.shed_trap_online", "off", { device_class: "connectivity" }, 180);
-  set("binary_sensor.shed_trap_kill", "unavailable", {}, 180);
+  set("script.kitchen_trap_reset", "off", { friendly_name: "Kitchen trap reset" });
+  // Shed: snap trap that stopped checking in three days ago.
+  set("sensor.shed_trap_strikes", 1, {}, 60 * 72);
+  set("sensor.shed_trap_battery", 71, { unit_of_measurement: "%", device_class: "battery" }, 60 * 72);
+  set("binary_sensor.shed_trap_kill", "off", {}, 60 * 72);
+  set("sensor.shed_trap_last_seen", minutesAgo(60 * 72), { device_class: "timestamp" });
 
   const config = {
     type: "custom:rodent-trap-card",
     title: "Rodent Traps",
+    stale_after: "12h",
+    offline_after: "2d",
     traps: [
       { name: "Garage", location: "Behind the freezer",
         strikes: "sensor.garage_trap_strikes", battery: "sensor.garage_trap_battery", kill: "binary_sensor.garage_trap_kill",
@@ -158,26 +189,49 @@
       { name: "Basement", location: "Next to the water heater",
         strikes: "sensor.basement_trap_strikes", battery: "sensor.basement_trap_battery", kill: "binary_sensor.basement_trap_kill",
         bait: "sensor.basement_trap_bait", online: "binary_sensor.basement_trap_online", rearm: "binary_sensor.basement_trap_rearm" },
-      { name: "Attic", location: "North eaves",
-        strikes: "sensor.attic_trap_strikes", battery: "sensor.attic_trap_battery", kill: "binary_sensor.attic_trap_kill",
-        bait: "input_select.attic_trap_bait", online: "binary_sensor.attic_trap_online" },
-      { name: "Kitchen", location: "Under the sink",
-        rearm: "sensor.kitchen_trap_status", battery: "binary_sensor.kitchen_trap_battery_low", bait: "sensor.kitchen_trap_bait" },
+      { device: "gn1" },
+      { device: "gn2" },
+      { name: "Kitchen", location: "Under the sink", style: "station",
+        rearm: "sensor.kitchen_trap_status", battery: "binary_sensor.kitchen_trap_battery_low", bait: "sensor.kitchen_trap_bait",
+        actions: [{ entity: "script.kitchen_trap_reset", name: "Mark re-armed", confirm: true }] },
       { name: "Shed", location: "Workbench",
         strikes: "sensor.shed_trap_strikes", battery: "sensor.shed_trap_battery", kill: "binary_sensor.shed_trap_kill",
-        online: "binary_sensor.shed_trap_online" },
+        last_seen: "sensor.shed_trap_last_seen" },
     ],
   };
+
+  const toast = document.getElementById("toast");
+  let toastTimer;
+  function showToast(text) {
+    toast.textContent = text;
+    toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
+  }
 
   const host = document.getElementById("host");
   const card = document.createElement("rodent-trap-card");
   host.appendChild(card);
   let cardConfig = { ...config };
   card.setConfig(cardConfig);
-  const push = () => { card.hass = { states: { ...states }, language: "en" }; };
+
+  // Pretend to be Home Assistant: buttons change the simulated device.
+  async function callService(domain, service, data, target) {
+    const id = target && target.entity_id;
+    await new Promise((r) => setTimeout(r, 350));
+    const p = id && id.replace(/^[a-z_]+\./, "").replace(/_(clear_kill_alert|lure_replaced|ping)$/, "");
+    if (id && id.endsWith("_clear_kill_alert")) set(`binary_sensor.${p}_kill_alert`, "off");
+    else if (id && id.endsWith("_lure_replaced")) { set(`sensor.${p}_lure_remaining`, states[`number.${p}_lure_life`].state); set(`binary_sensor.${p}_lure_due`, "off"); }
+    else if (id && id.endsWith("_ping")) { set(`sensor.${p}_last_seen`, new Date().toISOString()); set(`sensor.${p}_node_status`, "awake"); setTimeout(() => { set(`sensor.${p}_node_status`, "asleep"); push(); }, 4000); }
+    else if (id === "script.kitchen_trap_reset") set("sensor.kitchen_trap_status", "armed");
+    showToast(`Called ${domain}.${service} on ${id}`);
+    push();
+  }
+  const push = () => { card.hass = { states: { ...states }, entities, devices, areas, language: "en", callService }; };
   push();
 
   const num = (id) => Number(states[id]?.state) || 0;
+  const gn = (n, key) => `goodnature_trap_${n}_${key}`;
   const actions = {
     Garage: {
       "Catch!": () => { set("binary_sensor.garage_trap_kill", "on"); set("binary_sensor.garage_trap_rearm", "on"); set("sensor.garage_trap_strikes", num("sensor.garage_trap_strikes") + 1); set("input_number.garage_trap_bait", Math.max(0, num("input_number.garage_trap_bait") - 1)); },
@@ -191,21 +245,25 @@
       "Empty & re-arm": () => { set("binary_sensor.basement_trap_kill", "off"); set("binary_sensor.basement_trap_rearm", "off"); set("sensor.basement_trap_bait", 100); },
       "Catch!": () => { set("binary_sensor.basement_trap_kill", "on"); set("binary_sensor.basement_trap_rearm", "on"); set("sensor.basement_trap_strikes", num("sensor.basement_trap_strikes") + 1); },
     },
-    Attic: {
-      "Replace battery": () => set("sensor.attic_trap_battery", 100),
-      "Bait: Full": () => set("input_select.attic_trap_bait", "Full"),
-      "Bait: Empty": () => set("input_select.attic_trap_bait", "Empty"),
-      "Catch!": () => { set("binary_sensor.attic_trap_kill", "on"); set("sensor.attic_trap_strikes", num("sensor.attic_trap_strikes") + 1); },
-      "Clear": () => set("binary_sensor.attic_trap_kill", "off"),
+    "Mousetrap 1": {
+      "Strike": () => { set(`binary_sensor.${gn(1, "kill_alert")}`, "on"); set(`sensor.${gn(1, "strikes")}`, num(`sensor.${gn(1, "strikes")}`) + 1); set(`event.${gn(1, "strike")}`, new Date().toISOString()); set(`sensor.${gn(1, "last_seen")}`, new Date().toISOString()); },
+      "Lure −60 d": () => set(`sensor.${gn(1, "lure_remaining")}`, Math.max(0, num(`sensor.${gn(1, "lure_remaining")}`) - 60).toFixed(1)),
+      "Lure due": () => set(`binary_sensor.${gn(1, "lure_due")}`, states[`binary_sensor.${gn(1, "lure_due")}`].state === "on" ? "off" : "on"),
+      "Battery low alert": () => set(`binary_sensor.${gn(1, "battery_low")}`, states[`binary_sensor.${gn(1, "battery_low")}`].state === "on" ? "off" : "on"),
+      "Quiet for 30 h": () => set(`sensor.${gn(1, "last_seen")}`, minutesAgo(60 * 30)),
+      "Node dead": () => set(`sensor.${gn(1, "node_status")}`, "dead"),
+    },
+    "Mousetrap 2": {
+      "Armed sensor on": () => set(`binary_sensor.${gn(2, "trap_armed")}`, "on"),
+      "Armed sensor off": () => set(`binary_sensor.${gn(2, "trap_armed")}`, "off"),
     },
     Kitchen: {
-      "Re-arm": () => set("sensor.kitchen_trap_status", "armed"),
       "Spring it": () => set("sensor.kitchen_trap_status", "sprung"),
       "Battery low": () => set("binary_sensor.kitchen_trap_battery_low", states["binary_sensor.kitchen_trap_battery_low"].state === "on" ? "off" : "on"),
     },
     Shed: {
-      "Bring online": () => { set("sensor.shed_trap_strikes", 1); set("sensor.shed_trap_battery", 71); set("binary_sensor.shed_trap_online", "on"); set("binary_sensor.shed_trap_kill", "off"); },
-      "Go offline": () => { ["sensor.shed_trap_strikes", "sensor.shed_trap_battery", "binary_sensor.shed_trap_kill"].forEach((e) => set(e, "unavailable")); set("binary_sensor.shed_trap_online", "off"); },
+      "Report in": () => set("sensor.shed_trap_last_seen", new Date().toISOString()),
+      "Quiet for 3 d": () => set("sensor.shed_trap_last_seen", minutesAgo(60 * 72)),
     },
   };
 
@@ -213,6 +271,7 @@
   for (const [trap, acts] of Object.entries(actions)) {
     const box = document.createElement("div");
     box.className = "trap-ctl";
+    box.dataset.trap = trap;
     box.innerHTML = `<strong>${trap}</strong><div class="btns"></div>`;
     for (const [label, fn] of Object.entries(acts)) {
       const b = document.createElement("button");
@@ -245,14 +304,8 @@
     animBtn.textContent = `Animations: ${on ? "on" : "off"}`;
   });
 
-  const toast = document.getElementById("toast");
-  let toastTimer;
-  window.addEventListener("hass-more-info", (e) => {
-    toast.textContent = `Home Assistant would open the more-info dialog for ${e.detail.entityId}`;
-    toast.classList.add("show");
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toast.classList.remove("show"), 2200);
-  });
+  window.addEventListener("hass-more-info", (e) => showToast(`Home Assistant would open the more-info dialog for ${e.detail.entityId}`));
+  window.addEventListener("hass-notification", (e) => showToast(e.detail.message));
 </script>
 </body>
 </html>
