@@ -6,7 +6,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.0.0";
+  const VERSION = "1.0";
   const CARD_TAG = "rodent-trap-card";
   const EDITOR_TAG = "rodent-trap-card-editor";
 
@@ -2212,7 +2212,7 @@ ha-card { overflow: hidden; }
   }
 
   console.info(
-    `%c RODENT-TRAP-CARD %c v${VERSION} `,
+    `%c RODENT-TRAP-CARD %c ${VERSION} `,
     "color:#fff;background:#a8703a;font-weight:700;border-radius:3px 0 0 3px",
     "color:#a8703a;background:#f7c948;font-weight:700;border-radius:0 3px 3px 0"
   );

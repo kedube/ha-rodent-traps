@@ -369,7 +369,7 @@ The card only displays state and runs actions you ask for. Pair it with an autom
 The card is a single dependency-free file, [`dist/rodent-trap-card.js`](dist/rodent-trap-card.js), with no build step.
 
 - **Try it without Home Assistant:** open [`demo/index.html`](demo/index.html) in a browser. It runs the real card against simulated entities, including two Goodnature-style devices set up with `device:` alone. Buttons trigger strikes, drain lure and batteries, and take traps offline; hold actions call a simulated Home Assistant.
-- **Release:** bump `VERSION` at the top of the card file, commit, then publish a GitHub release tagged `vX.Y.Z`. HACS offers the new version to users.
+- **Release:** automatic. Every push to `main` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which publishes the next version: `1.0`, `1.1` … `1.9`, then `2.0`. Versions are `X.Y` with no `v` prefix. The workflow sets `VERSION` in the card file, commits it as "Release X.Y", tags it and publishes a GitHub release with the card attached, and HACS offers it to users. Run `git pull` before your next push to pick up the version commit.
 - **CI:** [`.github/workflows/validate.yml`](.github/workflows/validate.yml) runs the HACS validation action and a syntax check.
 
 ## License

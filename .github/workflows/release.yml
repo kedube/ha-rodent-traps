@@ -1,0 +1,75 @@
+name: Release
+
+# Every push to main publishes the next version: 1.0 -> 1.1 -> ... -> 1.9 -> 2.0.
+# The version commit is pushed with GITHUB_TOKEN, which doesn't trigger another run.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Check syntax
+        run: node --check dist/rodent-trap-card.js
+
+      - name: Work out the next version
+        id: version
+        run: |
+          latest=$(git tag --list | grep -E '^[0-9]+\.[0-9]$' | sort -V | tail -n 1 || true)
+          if [ -z "$latest" ]; then
+            # First release: use the version already in the card.
+            next=$(sed -nE 's/^ *const VERSION = "([0-9]+\.[0-9])";.*/\1/p' dist/rodent-trap-card.js)
+            next=${next:-1.0}
+          else
+            major=${latest%.*}
+            minor=${latest#*.}
+            if [ "$minor" -ge 9 ]; then
+              next="$((major + 1)).0"
+            else
+              next="${major}.$((minor + 1))"
+            fi
+          fi
+          echo "Latest release: ${latest:-none}, next: $next"
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Set the version in the card
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          sed -i -E "s/^( *const VERSION = )\"[^\"]*\";/\1\"${NEXT}\";/" dist/rodent-trap-card.js
+          grep -q "const VERSION = \"${NEXT}\";" dist/rodent-trap-card.js
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "Release ${NEXT}"
+            git push origin HEAD:main
+          fi
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          gh release create "$NEXT" dist/rodent-trap-card.js \
+            --target "$(git rev-parse HEAD)" \
+            --title "$NEXT" \
+            --generate-notes
