@@ -359,7 +359,7 @@
       discoveryCache.set(hass.entities, cache);
     }
     const hit = cache.get(deviceId);
-    if (hit && !hit.incomplete) return hit;
+    if (hit && !hit.incomplete && hit.devices === hass.devices) return hit;
 
     const devName = slug(deviceInfo(hass, deviceId).name);
     let incomplete = false;
@@ -395,7 +395,7 @@
     }
     const maker = deviceInfo(hass, deviceId).maker;
     const style = /goodnature/i.test(maker) ? "goodnature" : /station/i.test(maker) ? "station" : null;
-    const result = { roles, holds, style, incomplete };
+    const result = { roles, holds, style, incomplete, devices: hass.devices, ids: entries.map((e) => e.id) };
     cache.set(deviceId, result);
     return result;
   }
@@ -428,7 +428,7 @@
     if (!a) return null;
     const entity = a.entity || (a.target && typeof a.target.entity_id === "string" ? a.target.entity_id : null);
     const svc = a.action || a.perform_action || a.service;
-    const name = a.name || (entity ? shortName(hass, entity) : titleCase(String(svc || "Run").split(".").pop()));
+    const name = String(a.name || (entity ? shortName(hass, entity) : titleCase(String(svc || "Run").split(".").pop())));
     const confirm = a.confirm === undefined ? confirmDefault : a.confirm;
     return { name, icon: a.icon || null, confirm: typeof confirm === "string" ? confirm : !!confirm, call: actionCall(a) };
   }
@@ -468,16 +468,32 @@
       for (const [k, v] of Object.entries(trap.holds)) {
         const key = HOLD_KEYS[k];
         if (!key) continue;
-        if (v === false || v === null || v === "none") delete holds[key];
-        else if (makeAction(hass, v, true)) holds[key] = makeAction(hass, v, true);
+        const act = v === false || v === null || v === "none" ? null : makeAction(hass, v, true);
+        if (act) holds[key] = act;
+        else delete holds[key];
       }
     }
+    const specs = (Array.isArray(trap.actions) ? trap.actions : []).concat(Object.values(found.holds), Object.values(trap.holds || {}));
     const actions = (Array.isArray(trap.actions) ? trap.actions : []).map((a) => makeAction(hass, a, false)).filter(Boolean);
+    // Entities whose state (or friendly name) this trap's tile depends on.
+    const watch = new Set(found.ids || []);
+    for (const r of Object.values(refs)) {
+      if (!r) continue;
+      watch.add(r.entity);
+      const low = normalizeRef(r.low_entity);
+      if (low) watch.add(low.entity);
+      for (const x of [r.min, r.max]) if (isEntityId(x)) watch.add(x.trim());
+    }
+    for (const a of specs) {
+      const id = typeof a === "string" ? a.trim() : a && typeof a === "object" ? a.entity || (a.target && a.target.entity_id) : null;
+      if (typeof id === "string") watch.add(id);
+    }
 
     return {
       refs,
-      name: trap.name || info.name || `Trap ${index + 1}`,
-      location: trap.location === false || trap.location === "" ? "" : trap.location || info.area || "",
+      watch: Array.from(watch),
+      name: String(trap.name || info.name || `Trap ${index + 1}`),
+      location: trap.location === false || trap.location === "" ? "" : String(trap.location || info.area || ""),
       style,
       holds,
       actions,
@@ -502,11 +518,12 @@
       if (low) deps.push(low.entity);
       for (const x of [r.min, r.max]) if (isEntityId(x)) deps.push(x.trim());
     }
-    const missing = deps.filter((e, i) => deps.indexOf(e) === i && !(hass && hass.states && hass.states[e]));
+    const missing = Array.from(new Set(deps)).filter((e) => !(hass && hass.states && hass.states[e]));
 
     const lowRead = (k) => refs[k] && readRef(hass, normalizeRef(refs[k].low_entity));
     const m = {
       index,
+      watch: t.watch,
       name: t.name,
       location: t.location,
       style: t.style,
@@ -1285,6 +1302,17 @@ ha-card { overflow: hidden; }
 }
 `;
 
+  // Parse the stylesheet once and share it between every card on the page.
+  let sharedSheet = null;
+  try {
+    if ("adoptedStyleSheets" in Document.prototype && "replaceSync" in CSSStyleSheet.prototype) {
+      sharedSheet = new CSSStyleSheet();
+      sharedSheet.replaceSync(STYLES);
+    }
+  } catch (e) {
+    sharedSheet = null;
+  }
+
   // ---------------------------------------------------------------------------
   // Card
   // ---------------------------------------------------------------------------
@@ -1372,13 +1400,13 @@ ha-card { overflow: hidden; }
       clearInterval(this._timer);
       // Relative times, staleness and flash messages depend on the clock, not just on state changes.
       this._timer = setInterval(() => {
-        if (this._config && this._hass) this._update();
+        if (this._config && this._hass) this._update(true);
         this._refreshTimes();
       }, 30000);
       if ("IntersectionObserver" in window && !this._io) {
         this._io = new IntersectionObserver((entries) => {
-          const visible = entries.some((e) => e.isIntersecting);
-          if (this._root) this._root.classList.toggle("paused", !visible);
+          this._hidden = !entries.some((e) => e.isIntersecting);
+          if (this._root) this._root.classList.toggle("paused", this._hidden);
         });
         this._io.observe(this);
       }
@@ -1387,6 +1415,10 @@ ha-card { overflow: hidden; }
     disconnectedCallback() {
       clearInterval(this._timer);
       this._endHold();
+      this._tiles.forEach((t) => {
+        clearTimeout(t.flashTimer);
+        clearTimeout(t.pendingTimer);
+      });
       if (this._io) {
         this._io.disconnect();
         this._io = null;
@@ -1400,8 +1432,9 @@ ha-card { overflow: hidden; }
         clearTimeout(t.flashTimer);
         clearTimeout(t.pendingTimer);
       });
+      if (sharedSheet) this.shadowRoot.adoptedStyleSheets = [sharedSheet];
       this.shadowRoot.innerHTML = `
-        <style>${STYLES}</style>
+        ${sharedSheet ? "" : `<style>${STYLES}</style>`}
         <ha-card>
           <div class="wrap${cfg.animations === false ? " no-anim" : ""}${showHeader ? "" : " headless"}">
             ${showHeader ? `
@@ -1413,6 +1446,7 @@ ha-card { overflow: hidden; }
           </div>
         </ha-card>`;
       this._root = this.shadowRoot.querySelector(".wrap");
+      if (this._hidden) this._root.classList.add("paused");
       this._grid = this.shadowRoot.querySelector(".grid");
       this._summary = this.shadowRoot.querySelector(".summary");
       const cols = toNum(cfg.columns, 0);
@@ -1429,6 +1463,7 @@ ha-card { overflow: hidden; }
         return { el, sig: null, model: null, ui: { ...EMPTY_UI } };
       });
       this._summarySig = null;
+      this._painted = false;
       this._order = "";
       if (!cfg.traps.length) {
         this._grid.outerHTML = `<div class="empty">No traps configured yet.</div>`;
@@ -1436,15 +1471,41 @@ ha-card { overflow: hidden; }
       }
     }
 
-    _update() {
+    /** True when none of the trap's entities or the registries changed since its model was built. */
+    _unchanged(tile) {
+      const hass = this._hass;
+      const seen = tile.seen;
+      if (!tile.model || !seen || seen.entities !== hass.entities || seen.devices !== hass.devices || seen.areas !== hass.areas) return false;
+      const states = hass.states || {};
+      return tile.model.watch.every((id, n) => states[id] === seen.refs[n]);
+    }
+
+    _update(force = false) {
       const cfg = this._config;
       if (!this._grid) return;
-      const models = cfg.traps.map((t, i) => buildModel(this._hass, t, cfg, i));
+      const hass = this._hass;
+      const states = hass.states || {};
+      let changed = !this._painted;
+      const models = cfg.traps.map((t, i) => {
+        const tile = this._tiles[i];
+        if (!force && this._unchanged(tile)) return tile.model;
+        changed = true;
+        const m = buildModel(hass, t, cfg, i);
+        tile.seen = { entities: hass.entities, devices: hass.devices, areas: hass.areas, refs: m.watch.map((id) => states[id]) };
+        tile.fresh = m;
+        return m;
+      });
+      if (!changed) return;
 
       models.forEach((m, i) => {
         const tile = this._tiles[i];
+        if (tile.fresh !== m) return;
+        tile.fresh = null;
         const sig = JSON.stringify([m, tile.ui]);
-        if (sig === tile.sig) return;
+        if (sig === tile.sig) {
+          tile.model = m;
+          return;
+        }
         const prev = tile.model;
         const flags = {
           snap: !!prev && !["kill", "sprung"].includes(prev.scene) && ["kill", "sprung"].includes(m.scene),
@@ -1466,6 +1527,7 @@ ha-card { overflow: hidden; }
         });
       }
 
+      this._painted = true;
       if (this._summary) {
         const html = renderSummary(models);
         if (html !== this._summarySig) {
@@ -1629,6 +1691,8 @@ ha-card { overflow: hidden; }
       const el = ev.composedPath().find((n) => n instanceof HTMLElement && n.dataset && n.dataset.hold);
       if (!el || ev.button !== 0) return;
       this._endHold();
+      const index = this._tileIndex(el);
+      const key = el.dataset.hold;
       this._holdEl = el;
       this._holdStart = [ev.clientX, ev.clientY];
       el.classList.add("holding");
@@ -1638,7 +1702,7 @@ ha-card { overflow: hidden; }
         this._gestureHeld = true;
         this._holdAt = performance.now();
         this._endHold();
-        this._request(this._tileIndex(el), "hold", el.dataset.hold);
+        this._request(index, "hold", key);
       }, HOLD_MS);
     }
 
