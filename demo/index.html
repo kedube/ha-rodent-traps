@@ -78,9 +78,18 @@
   <div class="toolbar">
     <label>Width
       <select id="width">
+        <option value="250">Narrow (half a section)</option>
         <option value="400">Phone</option>
         <option value="560" selected>Section column</option>
         <option value="1000">Full width</option>
+      </select>
+    </label>
+    <label>Max columns
+      <select id="columns">
+        <option value="">Automatic</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
       </select>
     </label>
     <label>Order
@@ -99,7 +108,7 @@
   <div class="stage"><div class="card-host" id="host"></div></div>
   <aside class="panel">
     <h2>Simulate events</h2>
-    <p class="tip">Readings with a corner mark have a hold action. Press and hold them, or right-click.</p>
+    <p class="tip">Readings with a corner mark have a hold action. Press and hold one, right-click it, or Tab to it and press Shift+Enter. Escape cancels the question.</p>
     <div id="controls"></div>
   </aside>
 </main>
@@ -169,7 +178,7 @@
   // Kitchen: bait station, sprung, with a button on the tile.
   set("sensor.kitchen_trap_status", "sprung", {}, 95);
   set("binary_sensor.kitchen_trap_battery_low", "off", { device_class: "battery" });
-  set("sensor.kitchen_trap_bait", 100, { unit_of_measurement: "%" });
+  set("input_number.kitchen_trap_bait", 100, { min: 0, max: 100, step: 5, unit_of_measurement: "%" });
   set("script.kitchen_trap_reset", "off", { friendly_name: "Kitchen trap reset" });
   // Shed: snap trap that stopped checking in three days ago.
   set("sensor.shed_trap_strikes", 1, {}, 60 * 72);
@@ -192,8 +201,14 @@
       { device: "gn1" },
       { device: "gn2" },
       { name: "Kitchen", location: "Under the sink", style: "station",
-        rearm: "sensor.kitchen_trap_status", battery: "binary_sensor.kitchen_trap_battery_low", bait: "sensor.kitchen_trap_bait",
-        actions: [{ entity: "script.kitchen_trap_reset", name: "Mark re-armed", confirm: true }] },
+        rearm: "sensor.kitchen_trap_status", battery: "binary_sensor.kitchen_trap_battery_low", bait: "input_number.kitchen_trap_bait",
+        actions: [
+          { entity: "script.kitchen_trap_reset", name: "Mark re-armed", confirm: true },
+          // Home Assistant's own tap-action format, as pasted from another card.
+          { name: "Refill bait", action: "perform-action", perform_action: "input_number.set_value",
+            target: { entity_id: "input_number.kitchen_trap_bait" }, data: { value: 100 },
+            confirmation: { text: "Mark the bait station as refilled?" } },
+        ] },
       { name: "Shed", location: "Workbench",
         strikes: "sensor.shed_trap_strikes", battery: "sensor.shed_trap_battery", kill: "binary_sensor.shed_trap_kill",
         last_seen: "sensor.shed_trap_last_seen" },
@@ -224,6 +239,7 @@
     else if (id && id.endsWith("_lure_replaced")) { set(`sensor.${p}_lure_remaining`, states[`number.${p}_lure_life`].state); set(`binary_sensor.${p}_lure_due`, "off"); }
     else if (id && id.endsWith("_ping")) { set(`sensor.${p}_last_seen`, new Date().toISOString()); set(`sensor.${p}_node_status`, "awake"); setTimeout(() => { set(`sensor.${p}_node_status`, "asleep"); push(); }, 4000); }
     else if (id === "script.kitchen_trap_reset") set("sensor.kitchen_trap_status", "armed");
+    else if (domain === "input_number" && service === "set_value") set(id, data.value);
     showToast(`Called ${domain}.${service} on ${id}`);
     push();
   }
@@ -240,6 +256,8 @@
       "Bait −1": () => set("input_number.garage_trap_bait", Math.max(0, num("input_number.garage_trap_bait") - 1)),
       "Refill": () => set("input_number.garage_trap_bait", 5),
       "Toggle online": () => set("binary_sensor.garage_trap_online", states["binary_sensor.garage_trap_online"].state === "on" ? "off" : "on"),
+      // After a Home Assistant restart, sensors read "unknown" until the device reports: Status unknown, not Armed.
+      "Restart (unknown)": () => { set("binary_sensor.garage_trap_kill", "unknown"); set("binary_sensor.garage_trap_rearm", "unknown"); },
     },
     Basement: {
       "Empty & re-arm": () => { set("binary_sensor.basement_trap_kill", "off"); set("binary_sensor.basement_trap_rearm", "off"); set("sensor.basement_trap_bait", 100); },
@@ -247,6 +265,15 @@
     },
     "Mousetrap 1": {
       "Strike": () => { set(`binary_sensor.${gn(1, "kill_alert")}`, "on"); set(`sensor.${gn(1, "strikes")}`, num(`sensor.${gn(1, "strikes")}`) + 1); set(`event.${gn(1, "strike")}`, new Date().toISOString()); set(`sensor.${gn(1, "last_seen")}`, new Date().toISOString()); },
+      // A Z-Wave trap reports a strike as separate updates: the kill alert, then the count, the event and last seen.
+      "Strike (Z-Wave style)": () => {
+        set(`binary_sensor.${gn(1, "kill_alert")}`, "on");
+        [
+          () => set(`sensor.${gn(1, "strikes")}`, num(`sensor.${gn(1, "strikes")}`) + 1),
+          () => set(`event.${gn(1, "strike")}`, new Date().toISOString()),
+          () => set(`sensor.${gn(1, "last_seen")}`, new Date().toISOString()),
+        ].forEach((step, n) => setTimeout(() => { step(); push(); }, 300 * (n + 1)));
+      },
       "Lure −60 d": () => set(`sensor.${gn(1, "lure_remaining")}`, Math.max(0, num(`sensor.${gn(1, "lure_remaining")}`) - 60).toFixed(1)),
       "Lure due": () => set(`binary_sensor.${gn(1, "lure_due")}`, states[`binary_sensor.${gn(1, "lure_due")}`].state === "on" ? "off" : "on"),
       "Battery low alert": () => set(`binary_sensor.${gn(1, "battery_low")}`, states[`binary_sensor.${gn(1, "battery_low")}`].state === "on" ? "off" : "on"),
@@ -259,6 +286,7 @@
     },
     Kitchen: {
       "Spring it": () => set("sensor.kitchen_trap_status", "sprung"),
+      "Bait −25": () => set("input_number.kitchen_trap_bait", Math.max(0, num("input_number.kitchen_trap_bait") - 25)),
       "Battery low": () => set("binary_sensor.kitchen_trap_battery_low", states["binary_sensor.kitchen_trap_battery_low"].state === "on" ? "off" : "on"),
     },
     Shed: {
@@ -289,6 +317,8 @@
   width.addEventListener("change", applyWidth);
   applyWidth();
   document.getElementById("sort").addEventListener("change", (e) => reconfigure({ sort: e.target.value }));
+  // `columns` is a maximum: at phone width, 2 or 3 still gives one column of readable tiles.
+  document.getElementById("columns").addEventListener("change", (e) => reconfigure({ columns: e.target.value ? Number(e.target.value) : undefined }));
   const themeBtn = document.getElementById("theme");
   const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
   const setTheme = (dark) => {

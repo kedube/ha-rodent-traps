@@ -1,0 +1,164 @@
+name: CI
+
+# Checks every pull request, every push to main and, once a week, main itself.
+#
+# On main, once the syntax and test jobs pass, the release job publishes the next version:
+# 1.0 -> 1.1 -> ... -> 1.9 -> 2.0 (no "v" prefix). It only does so when the card file or
+# hacs.json changed since the last release, so README, image, test and workflow pushes don't
+# ask HACS users to update. Run this workflow by hand on main (Actions > CI > Run workflow)
+# to release anyway, for example to ship a README fix.
+# The release notes are the commits since the last release that changed the card or hacs.json.
+# The version commit is pushed with GITHUB_TOKEN, which doesn't trigger another run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hacs:
+    name: HACS validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: plugin
+
+  syntax:
+    name: JavaScript syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Check syntax
+        run: node --check dist/rodent-trap-card.js
+      # Older wall tablets and kiosk WebViews (Safari 12-13, Chrome 61-79) can't parse newer syntax such as ?. and ??.
+      - name: Check the card parses as ES2018
+        run: npx --yes acorn@8 --ecma2018 --silent dist/rodent-trap-card.js
+      - name: Check the card is plain ASCII
+        run: |
+          node -e 'const s = require("fs").readFileSync("dist/rodent-trap-card.js", "latin1"); const i = s.search(/[^\x00-\x7f]/); if (i >= 0) { console.log("::error file=dist/rodent-trap-card.js,line=" + s.slice(0, i).split("\n").length + "::Non-ASCII character. Write it as a \\u escape."); process.exit(1); }'
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      # The tests drive the Google Chrome that ubuntu-latest already has installed.
+      - run: npm ci
+      - run: npm test
+
+  release:
+    name: Publish release
+    needs: [syntax, test]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      # The commit that passed the checks, with every tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Work out the next version
+        id: version
+        run: |
+          latest=$(git tag --list | grep -E '^[0-9]+\.[0-9]$' | sort -V | tail -n 1 || true)
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          # A push that doesn't change what HACS installs isn't a release. A manual run always is.
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ -n "$latest" ] && git diff --quiet "$latest" HEAD -- dist/rodent-trap-card.js hacs.json; then
+            echo "::notice::Nothing to release: the card and hacs.json haven't changed since $latest. Run this workflow by hand to release anyway."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$latest" ]; then
+            # First release: use the version already in the card.
+            next=$(sed -nE 's/^ *const VERSION = "([0-9]+\.[0-9])";.*/\1/p' dist/rodent-trap-card.js)
+            next=${next:-1.0}
+          else
+            major=${latest%.*}
+            minor=${latest#*.}
+            if [ "$minor" -ge 9 ]; then
+              next="$((major + 1)).0"
+            else
+              next="${major}.$((minor + 1))"
+            fi
+          fi
+          echo "Latest release: ${latest:-none}, next: $next"
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Set the version in the card
+        id: bump
+        if: steps.version.outputs.skip != 'true'
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          sed -i.bak -E "s/^( *const VERSION = )\"[^\"]*\";/\1\"${NEXT}\";/" dist/rodent-trap-card.js
+          rm dist/rodent-trap-card.js.bak
+          grep -q "const VERSION = \"${NEXT}\";" dist/rodent-trap-card.js
+          node --check dist/rodent-trap-card.js
+          if git diff --quiet; then
+            echo "The card already says $NEXT."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          base=$(git rev-parse HEAD)
+          git commit -qam "Release ${NEXT}"
+          if ! git push origin HEAD:main; then
+            git fetch --quiet origin main
+            if [ "$(git rev-parse FETCH_HEAD)" != "$base" ]; then
+              # Someone pushed while this run was working. Their push has its own run, queued behind this
+              # one, and that run sees everything this one would have released.
+              echo "::notice::main moved on during this run, so $NEXT will come from the run for the newer push. If that push doesn't change the card, run this workflow by hand."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::Couldn't push the version commit to main, and main hasn't moved. Check the branch protection rules."
+            exit 1
+          fi
+
+      - name: Publish the release
+        if: steps.version.outputs.skip != 'true' && steps.bump.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.version.outputs.latest }}
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          # Home Assistant shows these notes in its update dialog: every commit since the last release that
+          # changed the card or hacs.json, minus the version commits and Co-authored-by style trailers.
+          notes="$RUNNER_TEMP/notes.md"
+          git log --no-merges -E --invert-grep --grep='^Release [0-9]+\.[0-9]$' \
+            --format='- %s%n%n%w(0,2,2)%b' "${LATEST:+$LATEST..}HEAD" -- dist/ hacs.json > "$notes.raw"
+          awk 'tolower($0) ~ /^  [a-z-]+-by: / { next }
+            /^[[:space:]]*$/ { gap = 1; next }
+            { if (gap && seen) print ""; gap = 0; seen = 1; print }' "$notes.raw" > "$notes"
+          if [ ! -s "$notes" ]; then
+            echo "Documentation and maintenance only; the card itself is unchanged." > "$notes"
+          fi
+          cat "$notes"
+          # --generate-notes appends GitHub's own notes, including the compare link.
+          gh release create "$NEXT" dist/rodent-trap-card.js \
+            --target "$(git rev-parse HEAD)" \
+            --title "$NEXT" \
+            -F "$notes" \
+            --generate-notes

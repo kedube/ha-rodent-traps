@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting
+    url: https://github.com/kedube/ha-rodent-traps#troubleshooting
+    about: Fixes for the common problems, such as "Custom element doesn't exist", readings that show a dash, "Check trap" and hold actions that fail.

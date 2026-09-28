@@ -1,0 +1,15 @@
+{
+  "name": "rodent-trap-card-dev",
+  "private": true,
+  "description": "Development tooling for the Rodent Trap Card. Not needed to install or use the card.",
+  "type": "module",
+  "scripts": {
+    "test": "node tests/run.mjs",
+    "images": "node scripts/readme-images.mjs"
+  },
+  "devDependencies": {
+    "acorn": "8.18.0",
+    "playwright": "1.63.0",
+    "yaml": "2.9.1"
+  }
+}

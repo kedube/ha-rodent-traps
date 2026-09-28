@@ -1,0 +1,87 @@
+name: Bug report
+description: The card shows something wrong, misses a reading, picks the wrong entity or doesn't load.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please check [Troubleshooting](https://github.com/kedube/ha-rodent-traps#troubleshooting) first.
+
+        Most problems depend on how a trap's integration reports its entities, so the entity details below are what make a bug fixable.
+
+  - type: input
+    id: card-version
+    attributes:
+      label: Card version
+      description: Shown in HACS, and in the browser console as `RODENT-TRAP-CARD 1.2` when a dashboard loads.
+      placeholder: "1.2"
+    validations:
+      required: true
+
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      description: "**Settings → About**."
+      placeholder: "2026.9.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How the card is installed
+      options:
+        - HACS
+        - Manually, as /local/rodent-trap-card.js
+        - Other (say how below)
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser or app
+      description: Browser and operating system, or the Companion app and its version. Say if it's a wall tablet or kiosk.
+      placeholder: Chrome 141 on Windows 11 / Home Assistant app 2026.9 on an iPad (iPadOS 17)
+    validations:
+      required: true
+
+  - type: input
+    id: integration
+    attributes:
+      label: Trap and integration
+      description: The trap model and the integration that provides its entities.
+      placeholder: Goodnature A24 Chirp on Z-Wave JS / snap trap with an Aqara contact sensor on ZHA
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, what the card showed instead, and any errors in the browser console. Screenshots help.
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Card configuration
+      description: In the dashboard editor, open the card, choose **Show code editor** and paste the YAML.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: entities
+    attributes:
+      label: Entities
+      description: |
+        Every entity of the trap's device, or every entity in the card configuration: entity ID, state, device class and unit.
+        **Developer tools → States** shows them all; filter by the trap's name.
+      placeholder: |
+        binary_sensor.garage_trap_kill_alert   off     device_class: (none)    unit: (none)
+        sensor.garage_trap_battery             82      device_class: battery   unit: %
+        sensor.garage_trap_lure_remaining      178.9   device_class: duration  unit: d
+      render: text
+    validations:
+      required: true

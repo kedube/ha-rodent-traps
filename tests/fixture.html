@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rodent Trap Card test fixture</title>
+<script>
+  // Minimal stand-in for Home Assistant's ha-form so the visual editor runs outside Home Assistant.
+  customElements.define("ha-form", class extends HTMLElement {
+    set data(v) { this._data = v; }
+    get data() { return this._data; }
+    emit(value) { this.dispatchEvent(new CustomEvent("value-changed", { detail: { value }, bubbles: true, composed: true })); }
+  });
+</script>
+<script src="../dist/rodent-trap-card.js"></script>
+</head>
+<body></body>
+</html>
