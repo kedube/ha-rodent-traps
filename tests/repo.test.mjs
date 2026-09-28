@@ -24,7 +24,7 @@ export default async function run() {
   const ci = YAML.parse(read(`${wfDir}/ci.yml`));
   check("CI: pushes run on main only", ci.on.push, { branches: ["main"] });
   check("CI: runs on pull requests and by hand", ["pull_request", "workflow_dispatch"].filter((k) => !(k in ci.on)), []);
-  check("CI: test job runs npm ci and npm test", ci.jobs.test.steps.map((s) => s.run).filter(Boolean), ["npm ci", "npm test"]);
+  check("CI: test job installs Roboto, then runs npm ci and npm test", ci.jobs.test.steps.map((s) => s.run).filter(Boolean).map((r) => (/fonts-roboto/.test(r) ? "fonts-roboto" : r)), ["fonts-roboto", "npm ci", "npm test"]);
   const release = ci.jobs.release;
   check("release: waits for syntax and tests, not HACS", [...release.needs].sort(), ["syntax", "test"]);
   check("release: main only, on push or by hand", release.if, "github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')");

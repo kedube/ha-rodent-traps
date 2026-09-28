@@ -57,7 +57,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      # The tests drive the Google Chrome that ubuntu-latest already has installed.
+      # The tests drive the Google Chrome that ubuntu-latest already has installed. Home Assistant draws the card in
+      # Roboto, and the layout tests measure text, so they need Roboto rather than the runner's wider fallback font.
+      - name: Install Roboto
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends fonts-roboto
       - run: npm ci
       - run: npm test
 
