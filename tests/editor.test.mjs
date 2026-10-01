@@ -54,6 +54,12 @@ export default async function run(browser) {
     forms()[1].emit({ ...forms()[1].data, style: "station", offline_after: { days: 3, hours: 0, minutes: 0, seconds: 0 } });
     check("style change written", events.at(-1).traps[0].style, "station");
     check("changed duration written", events.at(-1).traps[0].offline_after, { days: 3, hours: 0, minutes: 0, seconds: 0 });
+    editor.setConfig(events.at(-1));
+    forms()[1].emit({ ...forms()[1].data, co2: "sensor.shots", signal: "sensor.rssi", hold_co2: "button.can", hold_last_seen: "button.poll" });
+    const t2 = events.at(-1).traps[0];
+    check("CO2, signal and their holds written", [t2.co2, t2.signal, t2.holds.co2, t2.holds.last_seen, t2.holds.kill], ["sensor.shots", "sensor.rssi", "button.can", "button.poll", "button.a"]);
+    check("labels for the new fields", ["co2", "signal", "hold_co2", "hold_link", "hold_last_seen"].map((name) => forms()[1].computeLabel({ name })),
+      ["CO₂ shots remaining", "Signal strength", "Hold CO₂ to run", "Hold Link to run", "Hold Last seen to run"]);
 
     // Structural edits: add, move, remove.
     const e2 = document.createElement("rodent-trap-card-editor");
@@ -85,13 +91,16 @@ export default async function run(browser) {
     await new Promise((r) => setTimeout(r, 50));
     const f3 = () => [...e3.shadowRoot.querySelectorAll("ha-form")];
     const lowFields = (schema) => schema.flatMap((x) => x.schema || [x]).filter((x) => /_low$/.test(x.name));
-    check("thresholds: defaults are placeholders, not values", [f3()[0].data.battery_low, lowFields(f3()[0].schema).map((x) => x.default)], [undefined, [20, 25]]);
+    check("thresholds: defaults are placeholders, not values", [f3()[0].data.battery_low, lowFields(f3()[0].schema).map((x) => x.default)], [undefined, [20, 25, 20]]);
     const type = (patch) => { f3()[0].emit({ ...f3()[0].data, ...patch }); e3.setConfig(ev3.at(-1)); return [ev3.at(-1).battery_low, f3()[0].data.battery_low]; };
     check("thresholds: a cleared field isn't refilled", type({ battery_low: "" }), [undefined, undefined]);
     check("thresholds: typing after clearing gives the typed number", type({ battery_low: 2 }), [2, 2]);
     check("thresholds: a typed default is kept in the YAML", type({ battery_low: 20 }), [20, 20]);
     check("thresholds: the trap field names the card setting", [f3()[1].computeHelper({ name: "bait_low" }), f3()[1].computeHelper({ name: "battery_low" })],
       ["Blank = card setting (30%)", "Blank = card setting (20%)"]);
+    const flat = (schema) => schema.flatMap((x) => (x.schema ? flat(x.schema) : [x]));
+    check("thresholds: low CO2 is one of them", [f3()[1].computeHelper({ name: "co2_low" }), flat(f3()[1].schema).map((x) => x.name).filter((n) => /_low$/.test(n))],
+      ["Blank = card setting (20%)", ["battery_low", "bait_low", "co2_low"]]);
     return out;
   });
   return { lines, errors: page.errors };

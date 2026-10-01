@@ -1,6 +1,6 @@
 # Rodent Trap Card
 
-A Home Assistant dashboard card that shows the state of your smart rodent traps at a glance: catches, strikes, battery, bait, connectivity, when each trap was last seen and whether it needs re-arming. Each trap gets an animated illustration. There are three kinds: a snap trap, a Goodnature-style CO₂ trap and a bait station. You can run a trap's buttons (clear kill alert, lure replaced, ping) straight from the tile.
+A Home Assistant dashboard card that shows the state of your smart rodent traps at a glance: catches, strikes, battery, bait, CO₂ shots left, connectivity, signal strength, when each trap was last seen and whether it needs re-arming. Each trap gets an animated illustration. There are three kinds: a snap trap, a Goodnature-style CO₂ trap and a bait station. You can run a trap's buttons (clear kill alert, lure replaced, CO₂ canister replaced, ping) straight from the tile.
 
 [![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=kedube&repository=ha-rodent-traps&category=plugin)
 
@@ -12,17 +12,18 @@ A Home Assistant dashboard card that shows the state of your smart rodent traps 
 
 ## Features
 
-- **Set up a trap by picking its device.** The card matches the device's entity names and device classes to fill in every reading, the device's low-battery and lure-due alerts, and the lure capacity. It also finds the clear-kill-alert, lure-replaced and ping buttons. The name and location come from the device and its area.
-- **Readings per trap:** catch (kill) alert, strikes, last strike, battery, bait remaining, armed / needs re-arm, online state and last seen. Each trap uses only the entities it has.
+- **Set up a trap by picking its device.** The card matches the device's entity names and device classes to fill in every reading, the device's low-battery, lure-due and low-CO₂ alerts, and the lure capacity. It also finds the clear-kill-alert, lure-replaced, CO₂-canister-replaced and ping buttons. The name and location come from the device and its area.
+- **Readings per trap:** catch (kill) alert, strikes, last strike, battery, bait remaining, CO₂ shots remaining, armed / needs re-arm, online state, last seen and signal strength. Each trap uses only the entities it has.
 - **Cross-checks the trap.** If a trap reports both *armed* and *re-arm required* and they disagree, the tile says **Check trap** instead of guessing.
 - **Knows when a trap has gone quiet.** Set `stale_after` and `offline_after` and a sleepy battery trap is flagged when it hasn't checked in.
-- **Buttons on the tile.** Hold a reading to run its action (hold Catch to clear the kill alert, Bait for lure replaced, Last seen to ping), with a confirmation first. You can also add a row of buttons to any trap.
+- **Buttons on the tile.** Hold a reading to run its action (hold Catch to clear the kill alert, Bait for lure replaced, CO₂ for a new canister, Link to ping), with a confirmation first. You can also add a row of buttons to any trap.
 - **Animated illustration** per trap type and state:
   - **Armed:** a mouse sniffs around the trap and darts off twice, then sits still. It plays again when the trap is set again.
   - **Catch:** the trap goes off live with "SNAP!", "POP!" or "ZAP!", and the tile turns red with a pulsing ring. It plays once, when the catch is reported, even when the device reports the catch, the count and the time as separate updates. It doesn't play again when you come back to the dashboard, or when an integration reloads and brings back a catch it already had.
   - **Sprung:** a spinning re-arm badge appears.
   - **Offline:** the trap is greyed out.
   - **Bait:** the drawn bait (cheese, lure window or bait blocks) runs down with the bait level.
+  - **CO₂:** the Goodnature trap's canister is outlined in red when it's out of CO₂.
 - **Readable values.** Durations are rounded to whole units (178.9 days shows as **179 d**, or **26 wk** if you prefer). Long values shrink or wrap instead of being cut off, and each reading's tooltip shows the full value, its hold action and the entity ID.
 - **Summary chips** in the header show catches, traps to re-arm, offline traps, traps that need attention and total strikes.
 - **Visual editor** with a device picker. Every field shows what the device supplies if you leave it blank.
@@ -98,6 +99,7 @@ The visual editor fills in device IDs for you. To find one yourself, open the de
 | `offline_after` | duration | none | Treat a trap as **Offline** when its `last_seen` is older than this. |
 | `battery_low` | number | `20` | Battery percentage at or below which a trap is flagged, when the device has no low-battery alert of its own. |
 | `bait_low` | number | `25` | Bait percentage at or below which a trap is flagged, when the device has no low-bait alert of its own. |
+| `co2_low` | number | `20` | CO₂ percentage at or below which a trap is flagged, when the device has no low-CO₂ alert of its own. 20% of a 24-shot canister is 4 shots. |
 | `columns` | number | automatic | The most tiles to put side by side. Tiles stay at least 250 px wide, so a narrow card (a phone, say) shows fewer columns than this. By default, tiles flow into as many columns (about 290 px wide) as fit, and one or two traps stretch across a wide card. |
 | `show_summary` | boolean | `true` | Show the summary chips in the header. |
 | `show_scene` | boolean | `true` | Show the trap illustrations. Set to `false` for a compact card. |
@@ -131,11 +133,13 @@ The card checks option values when it loads. A duration it can't read, a misspel
 | `last_strike` | entity | When the trap last struck: an `event` entity, a timestamp sensor or an `input_datetime` helper. |
 | `battery` | entity | Battery level (percent), a low-battery binary sensor, or a voltage with a `min` and `max` range (see [Advanced entity options](#advanced-entity-options)). |
 | `bait` | entity | Bait remaining. See [How states are read](#how-states-are-read). |
+| `co2` | entity | CO₂ shots left in a gas-powered trap's canister, such as a Goodnature A24. Read against a 24-shot canister unless you set `max`. A percentage works too. |
 | `online` | entity | Connectivity, such as a connectivity binary sensor or a Z-Wave node status sensor. If you leave it out, the trap counts as offline when **all** its device entities are `unavailable`. Helpers (`counter`, `input_*`, `timer`, `schedule`) are ignored for this, because they never go unavailable. |
-| `last_seen` | entity | Timestamp of the trap's last check-in. Works with `stale_after` / `offline_after`. |
+| `last_seen` | entity | Timestamp of the trap's last check-in, shown as its own **Last seen** reading. Works with `stale_after` / `offline_after`. |
+| `signal` | entity | Signal strength: RSSI in dBm, a percentage or Zigbee LQI, shown as 0 to 4 bars. For display only: a weak signal isn't a warning. |
 | `holds` | mapping | Actions that run when you hold a reading. See [Actions](#actions). |
 | `actions` | list | Buttons shown on the tile. See [Actions](#actions). |
-| `battery_low`, `bait_low` | number | Override the card's thresholds for this trap. |
+| `battery_low`, `bait_low`, `co2_low` | number | Override the card's thresholds for this trap. |
 | `stale_after`, `offline_after` | duration | Override the card's thresholds for this trap. |
 
 Any entity option can be set to `false` to hide something the device would otherwise supply, for example `strikes: false`.
@@ -158,13 +162,18 @@ With `device:`, the card looks through that device's entities and assigns each o
 | `bait` | `lure_remaining`, `bait_remaining`, `lure_level`, `bait_level` | |
 | bait low alert | `lure_due`, `bait_due`, `lure_low`, `replace_lure` | |
 | bait capacity | `lure_life`, `bait_life`, `lure_capacity` | |
+| `co2` | `co2_shots_remaining`, `co2_remaining`, `co2`, `shots_remaining`, `strikes_remaining`, `canister_remaining` | not a CO₂ concentration sensor (device class `carbon_dioxide`) |
+| CO₂ low alert | `co2_low`, `canister_low`, `co2_empty`, `replace_co2` | |
+| CO₂ capacity | `co2_capacity`, `canister_capacity`, `shots_per_canister` | |
 | `online` | `online`, `connectivity`, `connected`, `node_status` | binary sensor with device class `connectivity` |
 | `last_seen` | `last_seen`, `last_report`, `last_heard`, `last_contact` | |
+| `signal` | `rssi`, `signal_strength`, `signal`, `wifi_signal`, `linkquality`, `lqi` | sensor with device class `signal_strength`; RSSI is picked before LQI |
 | hold on Catch | buttons ending in `clear_kill_alert`, `clear_catch`, `clear_alert`, `kill_alert_clear`, `reset_kill` or `reset_catch` | not `reset_kill_count` |
 | hold on Bait | buttons ending in `lure_replaced`, `bait_replaced`, `bait_refilled`, `replace_lure` or `refill` | |
-| hold on Link | `ping` button | |
+| hold on CO₂ | buttons ending in `co2_canister_replaced`, `canister_replaced`, `co2_replaced` or `replace_canister` | not `co2_shot_used` |
+| hold on Link | `ping` button | on **Last seen** instead when the trap has no `online` entity |
 
-The low alerts and capacity are attached to the device's own battery and bait entities. The visual editor shows each match under its field ("From device: …"), so you can see what was picked and override it.
+The low alerts and capacities are attached to the device's own battery, bait and CO₂ entities. The visual editor shows each match under its field ("From device: …"), so you can see what was picked and override it.
 
 ### Advanced entity options
 
@@ -195,9 +204,9 @@ traps:
 | `attribute` | all | Read this attribute instead of the entity's state. |
 | `invert` | `kill`, `armed`, `rearm`, `online`, binary `battery`/`bait` | Flip the on/off meaning. |
 | `active_states` | `kill`, `armed`, `rearm`, `online` | List of states that mean "yes". Every other state then means "no"; only `unavailable` and `unknown` stay unknown. To list the states that mean "no" instead, list those and add `invert: true`. Matching ignores case and treats spaces and underscores the same. |
-| `min`, `max` | `battery`, `bait` | Range that maps to 0–100%: a number or an entity ID (its state is used, so the range follows the device). Defaults to 0–100, or the helper's own min/max for `input_number` and `number` entities; a `min` or `max` you set wins over the helper's. A voltage (`V`, `mV` or device class `voltage`) shows as a plain value until you set its range, for example `min: 2.4` and `max: 3.2` for two AA cells. If `max` isn't above `min` (a capacity entity reporting 0, say), the value is shown as it is and never counts as low. |
-| `low_entity` | `battery`, `bait` | A separate low alert (binary sensor, or states like `low`/`due`). When it reports, it decides whether the reading is low, instead of `battery_low` / `bait_low`. |
-| `unit` | `battery`, `bait` | Unit to display, overriding the entity's `unit_of_measurement`. |
+| `min`, `max` | `battery`, `bait`, `co2`, `signal` | Range that maps to 0–100%: a number or an entity ID (its state is used, so the range follows the device). Defaults to 0–100, or the helper's own min/max for `input_number` and `number` entities; a `min` or `max` you set wins over the helper's. A voltage (`V`, `mV` or device class `voltage`) shows as a plain value until you set its range, for example `min: 2.4` and `max: 3.2` for two AA cells. If `max` isn't above `min` (a capacity entity reporting 0, say), the value is shown as it is and never counts as low. For `co2`, `max` is the canister size (24 shots by default); for `signal`, it's the strongest reading, which gets all 4 bars. |
+| `low_entity` | `battery`, `bait`, `co2` | A separate low alert (binary sensor, or states like `low`/`due`). When it reports, it decides whether the reading is low, instead of `battery_low`, `bait_low` or `co2_low`. |
+| `unit` | `battery`, `bait`, `co2`, `signal` | Unit to display, overriding the entity's `unit_of_measurement`. |
 | `display_unit` | `battery`, `bait` | For durations: show in `h`, `d`, `weeks` or `months`. |
 
 The visual editor keeps these extra keys when you change the entity, so you can mix the editor with YAML.
@@ -212,11 +221,13 @@ The visual editor keeps these extra keys when you change the entity, so you can 
 | `online` | `on`, `online`, `connected`, `home`, `alive`, `awake`, `asleep`, or any number (such as signal strength) | `off`, `offline`, `disconnected`, `not_home`, `dead`, `lost`, `unreachable`, or the entity being `unavailable` |
 
 - **Unrecognised states count as unknown, never as "yes".** An `online` entity reporting something the card doesn't know shows **—** rather than **Online**. (With `active_states`, a state that isn't listed counts as "no" instead.) A trap is only **Armed** when its `kill`, `armed` or `rearm` reading says so; while they are all unknown (for example just after Home Assistant restarts) it shows **Status unknown**.
-- **Z-Wave `node_status` works without extra config.** `asleep` is shown as **Asleep**, `alive` and `awake` as **Online**, and `dead` as **Offline**. A trap that also has `last_seen` shows that time in the Link reading instead; `dead` still makes it **Offline**.
+- **Z-Wave `node_status` works without extra config.** `asleep` is shown as **Asleep**, `alive` and `awake` as **Online**, and `dead` as **Offline**. A trap that also has `last_seen` shows that time in its own **Last seen** reading beside it.
 - **`strikes`** is any numeric state.
 - **`last_strike`** and **`last_seen`** read a timestamp state: an `event` entity, a sensor with device class `timestamp`, an `input_datetime` helper, or a Unix timestamp in seconds, milliseconds, microseconds or nanoseconds. A date without a time counts from midnight. Other entities fall back to their own times: `last_strike` to when the state last changed, `last_seen` to when the entity last updated, which includes attribute-only updates.
 - **`battery`** is a percentage. A binary sensor counts as a low battery when `on`. Words like `low`, `critical`, `ok` and `full` also work. A voltage is shown as it is (**3.1 V**) until you give it a range with `min` and `max`.
 - **`bait`** is a percentage, or a value scaled by its range (a 0–5 helper at 3 shows **3/5**). The words `full`, `high`, `half`, `medium`, `low` and `empty` also work, so an `input_select` is a simple way to track bait by hand. A binary sensor means low bait when `on`.
+- **`co2`** is a count of shots, read against a 24-shot canister (set `max` for another size), so 18 shots with unit `shots` shows **18 shots** and without a unit **18/24**. A percentage works too, and a binary sensor means low CO₂ when `on`.
+- **`signal`** is shown as 0 to 4 bars, one for each fifth of its range: −100 to −50 dBm for RSSI (4 bars at −60 dBm or stronger, 3 down to −70, 2 down to −80, 1 below that), 0 to 255 for LQI, and 0 to 100 for a percentage. A negative number without a unit counts as dBm and a positive one as LQI. Set `min` and `max` for another range.
 - **Durations** (units `d`, `h`, `min`, `s`, `wk`, `mo`) are rounded to whole units. Other numbers follow the entity's display precision from Home Assistant.
 - **`unavailable` or `unknown`** show as **—**.
 
@@ -230,13 +241,13 @@ Each trap gets one status. The highest one that applies wins:
 | Needs re-arm | amber | `rearm` is on, or `armed` is off |
 | Offline | grey | `online` is off, `last_seen` is older than `offline_after`, or (without `online`) every device entity is unavailable, helpers ignored |
 | Check trap / Card error | amber | `armed` and `rearm` disagree (**Check trap**), or something about the trap couldn't be read (**Card error**, see [Troubleshooting](#troubleshooting)) |
-| Low battery / Out of bait / Low bait / Not seen recently / Entity not found | amber | a reading is low or the bait is at 0, `last_seen` is older than `stale_after`, or an entity ID doesn't exist. When several apply, the chip shows the first and a count of the rest, for example **Low battery +1**. |
+| Low battery / Out of bait / Low bait / Out of CO₂ / Low CO₂ / Not seen recently / Entity not found | amber | a reading is low or the bait or CO₂ is at 0, `last_seen` is older than `stale_after`, or an entity ID doesn't exist. When several apply, the chip shows the first and a count of the rest, for example **Low battery +1**. |
 | Status unknown / No data / Not set up | grey | the trap's `kill`, `armed` and `rearm` readings are all unknown or unrecognised (**Status unknown**, common just after a restart), none of its entities has a value yet (**No data**), or it has no entities (**Not set up**) |
 | Armed / All good | green | none of the above. **Armed** needs a `kill`, `armed` or `rearm` reading; traps without one show **All good** |
 
 Status colours come from your theme's `--error-color`, `--warning-color`, `--success-color` and `--disabled-text-color`. The illustrations have colours of their own; see [Theme colours](#theme-colours).
 
-A reading's label also says when it needs attention: **Battery low**, **Bait low**, **Out of bait** or **Last seen, late**. That way a low battery still shows in words when a more urgent status, such as a catch, has the chip. The label stays plain when the value already says it (a battery reading **Low**).
+A reading's label also says when it needs attention: **Battery low**, **Bait low**, **Out of bait**, **CO₂ low**, **Out of CO₂** or **Last seen, late**. That way a low battery still shows in words when a more urgent status, such as a catch, has the chip. The label stays plain when the value already says it (a battery reading **Low**).
 
 ### Theme colours
 
@@ -285,14 +296,14 @@ Readings with a hold action have a small corner mark. Press and hold one (or rig
 - While the action runs, its reading is dimmed and can't be held again, so a slow call isn't sent twice.
 - In the Home Assistant app, the phone vibrates when the tile asks and when the action starts, as it does for Home Assistant's own cards.
 
-With `device:`, the card sets these up from the device's buttons: **Catch** clears the kill alert, **Bait** marks the lure replaced, and **Last seen / Link** pings the trap. Add or change them with `holds:`:
+With `device:`, the card sets these up from the device's buttons: **Catch** clears the kill alert, **Bait** marks the lure replaced, **CO₂** marks a new canister, and **Link** pings the trap (or **Last seen**, on a trap without an `online` entity). Add or change them with `holds:`:
 
 ```yaml
 - device: 3f1c2a9d8e7b4c6a5f0e1d2c3b4a5f6e
   holds:
     kill: button.goodnature_trap_1_clear_kill_alert   # hold on Catch
     bait: script.log_lure_change                       # hold on Bait
-    link: false                                        # no hold on Last seen
+    link: false                                        # no hold on Link
     strikes:                                           # hold on Strikes
       action: counter.reset
       target:
@@ -301,7 +312,7 @@ With `device:`, the card sets these up from the device's buttons: **Catch** clea
       confirm: Reset the strike count to zero?
 ```
 
-Hold keys are the readings: `kill`, `trap` (armed / re-arm), `strikes`, `last_strike`, `battery`, `bait` and `link` (online / last seen). `catch`, `armed`, `rearm`, `online` and `last_seen` work as aliases, and any other key is a configuration error. Tapping a reading still opens its more-info dialog.
+Hold keys are the readings: `kill`, `trap` (armed / re-arm), `strikes`, `last_strike`, `battery`, `bait`, `co2`, `link` (online), `last_seen` and `signal`. `catch`, `armed`, `rearm` and `online` work as aliases, and any other key is a configuration error. A `link` hold on a trap without an `online` entity goes on **Last seen**, and a `last_seen` hold on a trap without `last_seen` goes on **Link**. Tapping a reading still opens its more-info dialog.
 
 ### Buttons on the tile
 
@@ -383,6 +394,18 @@ traps:
       display_unit: weeks
 ```
 
+### Goodnature A24 Smart Traps over Bluetooth
+
+The [Goodnature gateway](https://github.com/kedube/ha-goodnature-gateway), an ESP32 running ESPHome, adds each trap as its own device. Pick that device and the card fills in the strikes, battery, lure, CO₂ shots, online state, last seen and signal strength. It also sets up holds that clear the kill alert, mark the lure replaced and mark a new CO₂ canister. If you set the gateway's `co2_capacity` to something other than 24, give the card the same canister size:
+
+```yaml
+traps:
+  - device: 5b2e9c1d7a3f4e6b8c0d1e2f3a4b5c6d
+    co2:
+      entity: sensor.goodnature_a24_smart_trap_1_co2_shots_remaining
+      max: 30
+```
+
 ### A classic snap trap with a contact sensor
 
 Stick a Zigbee door/window sensor to a snap trap so that it opens when the bar swings. Track strikes with a counter helper and bait with an `input_select` that you update by hand:
@@ -422,7 +445,7 @@ Many connected traps expose a *kills present* count (catches waiting to be empti
   kill: sensor.crawlspace_trap_kills_present
   strikes: sensor.crawlspace_trap_total_kills
   battery: sensor.crawlspace_trap_battery_level
-  online: sensor.crawlspace_trap_wireless_signal    # any numeric reading means online
+  signal: sensor.crawlspace_trap_wireless_signal    # shown as 0 to 4 bars
 ```
 
 ### Get a phone notification on a catch
@@ -449,7 +472,7 @@ The card only displays state and runs actions you ask for. Pair it with an autom
 - **"Custom element doesn't exist: rodent-trap-card".** The resource isn't loaded. Check the resource URL, then reload the browser. On the mobile app, open **Settings → Companion app**, then **Troubleshooting** (Android) or **Debugging** (iOS), and choose **Reset frontend cache**.
 - **A device reading is wrong or missing.** Open the trap in the visual editor: each field shows which entity the device supplied. Pick a different entity to override it, or set the option to `false` in YAML to hide it.
 - **A reading shows "—".** The entity is `unavailable` or `unknown`, or its state is something the card doesn't recognise. For Catch, Trap or Link, list the device's states with `active_states`. For Strikes, point it at a numeric entity, or at the attribute that holds the count with `attribute:`. If you set `attribute:`, check that the entity has that attribute. See [Advanced entity options](#advanced-entity-options).
-- **A battery or bait percentage looks wrong.** The value is being scaled to 0–100 with the wrong range. Set `min` and `max` (empty and full), for example for a voltage or a lure life in days.
+- **A battery, bait or CO₂ level looks wrong.** The value is being scaled to 0–100 with the wrong range. Set `min` and `max` (empty and full), for example for a voltage, a lure life in days or a CO₂ canister with more or fewer than 24 shots.
 - **"Check trap".** The trap's armed and re-arm sensors contradict each other. Check the trap in person. If the device reports these sensors with the opposite meaning, add `invert: true` to one of them.
 - **"Entity not found".** An entity ID is misspelled or the entity was removed. The tile lists the IDs it couldn't find, including those used for `max`, `min` and `low_entity`.
 - **A hold action fails.** The tile says why, for example "connection lost", and Home Assistant shows its own error message. Entities other than buttons, scripts, scenes, automations and toggles need an explicit `action:`.
@@ -461,7 +484,7 @@ The card only displays state and runs actions you ask for. Pair it with an autom
 
 The card is a single dependency-free file, [`dist/rodent-trap-card.js`](dist/rodent-trap-card.js), with no build step. Keep it to ES2018 syntax (no `?.` or `??`) and plain ASCII (write other characters as `\u` escapes), because older wall tablets and kiosk browsers still run Home Assistant. CI checks both.
 
-- **Try it without Home Assistant:** open [`demo/index.html`](demo/index.html) in a browser. It runs the real card against simulated entities, including two Goodnature-style devices set up with `device:` alone. Buttons trigger strikes, drain lure and batteries, and take traps offline; hold actions and the buttons on the tiles call a simulated Home Assistant. Mousetrap 1's **Strike (Z-Wave style)** sends the catch, the count, the event and last seen as four updates 300 ms apart, the way Z-Wave traps report them. The Kitchen trap's **Refill bait** button is written in Home Assistant's `perform-action` format. The toolbar changes the card's width, from a narrow tile (half a section) to full width, and sets `columns`, so you can see the compact layout and `columns` as a maximum.
+- **Try it without Home Assistant:** open [`demo/index.html`](demo/index.html) in a browser. It runs the real card against simulated entities, including two Goodnature-style devices set up with `device:` alone. Buttons trigger strikes, drain lure and batteries, and take traps offline; hold actions and the buttons on the tiles call a simulated Home Assistant. Mousetrap 1's **Strike (Z-Wave style)** sends the catch, the count, the event and last seen as four updates 300 ms apart, the way Z-Wave traps report them. Mousetrap 1's **CO₂ −8 shots** and **Weak signal** buttons run down its canister and its signal. The Kitchen trap's **Refill bait** button is written in Home Assistant's `perform-action` format. The toolbar changes the card's width, from a narrow tile (half a section) to full width, and sets `columns`, so you can see the compact layout and `columns` as a maximum.
 - **Tests:** run `npm ci` once, then `npm test`. The tests drive the card, the visual editor and the demo in headless Google Chrome (set `CHROME_PATH` to use another Chrome or Chromium), check the syntax rules above, the README's links and the workflow, and replay the release job against scratch Git repositories. `npm test -- editor` runs only the suites with `editor` in their file name.
 - **README images:** `npm run images` regenerates [`images/card-dark.png`](images/card-dark.png) and [`images/snap.gif`](images/snap.gif) from the demo. The GIF also needs `ffmpeg`, and the exact command is at the top of [`scripts/readme-images.mjs`](scripts/readme-images.mjs). The README loads the GIF from `main` by its full URL because HACS rewrites relative Markdown images but not HTML `<img>` tags.
 - **CI:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the HACS validation action, the syntax checks and the tests on every pull request and every push to `main`, and weekly.

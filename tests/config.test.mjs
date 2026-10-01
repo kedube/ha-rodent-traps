@@ -82,10 +82,10 @@ export default async function run(browser) {
     }
     for (const key of ["catch_alert", "Kill", "constructor", "toString", "hasOwnProperty"]) {
       check(`hold key ${key} is an error`, configError({ traps: [{ holds: { [key]: "button.x" } }] }),
-        `traps[0].holds.${key} is not a reading (use kill, trap, strikes, last_strike, battery, bait or link).`);
+        `traps[0].holds.${key} is not a reading (use kill, trap, strikes, last_strike, battery, bait, co2, link, last_seen or signal).`);
     }
     check("hold key __proto__ is an error", configError(JSON.parse('{"traps":[{"holds":{"__proto__":"button.x"}}]}')),
-      "traps[0].holds.__proto__ is not a reading (use kill, trap, strikes, last_strike, battery, bait or link).");
+      "traps[0].holds.__proto__ is not a reading (use kill, trap, strikes, last_strike, battery, bait, co2, link, last_seen or signal).");
     check("hold aliases still work", configError({ traps: [{ holds: { catch: "button.x", online: "button.y", last_seen: false } }] }), "ok");
     {
       const c = mount({ traps: [{ battery: "sensor.b" }] }, { states: { "sensor.b": st(5, { unit_of_measurement: "constructor" }) } });
@@ -199,7 +199,7 @@ export default async function run(browser) {
       {
         const c = mount({ traps: [{ kill: "binary_sensor.k", last_seen: { entity: "sensor.clock", attribute: "ts" } }] },
           { states: { "binary_sensor.k": st("off"), "sensor.clock": st("ok", { ts: (Date.now() - 2 * 3600000) * 1e6 }) } });
-        check("a nanosecond epoch attribute reads as a time", [c.shadowRoot.querySelector(".m-link .m-value").textContent.trim(), chip(c)], ["2 h ago", "Armed"]);
+        check("a nanosecond epoch attribute reads as a time", [c.shadowRoot.querySelector(".m-last_seen .m-value").textContent.trim(), chip(c)], ["2 h ago", "Armed"]);
         c.remove();
       }
       check("no errors logged for those", logged, []);
@@ -273,7 +273,7 @@ export default async function run(browser) {
       t.hass = { states: { "sensor.ls": st(ago(120), { device_class: "timestamp" }) } };
       document.body.appendChild(t);
       window.setInterval = setInt;
-      const since = t.shadowRoot.querySelector(".m-link [data-since]");
+      const since = t.shadowRoot.querySelector(".m-last_seen [data-since]");
       since.textContent = "stale";
       t._update = () => { throw new Error("update failed"); };
       let tickThrew = null;
@@ -346,7 +346,7 @@ export default async function run(browser) {
     ed.remove();
     check("card: a name alone is a (not set up) single trap", configError({ name: "Solo" }), "ok");
     check("card: single-trap errors name the option as written", configError({ kill: "binary_sensor.k", holds: { bogus: "button.x" } }),
-      "holds.bogus is not a reading (use kill, trap, strikes, last_strike, battery, bait or link).");
+      "holds.bogus is not a reading (use kill, trap, strikes, last_strike, battery, bait, co2, link, last_seen or signal).");
     check("card: still needs a trap", configError({ title: "T" }), "Add at least one trap under `traps:` (see the Rodent Trap Card README).");
     return out;
   });

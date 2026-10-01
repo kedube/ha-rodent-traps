@@ -151,10 +151,14 @@
     add(`sensor.${p}_lure_remaining`, opts.lure ?? 178.9, { label: "Lure remaining", unit_of_measurement: "d", device_class: "duration" });
     add(`number.${p}_lure_life`, 180, { label: "Lure life", unit_of_measurement: "d", min: 1, max: 365 });
     add(`binary_sensor.${p}_lure_due`, opts.lureDue ?? "off", { label: "Lure due" });
+    add(`sensor.${p}_co2_shots_remaining`, opts.co2 ?? 22, { label: "CO2 shots remaining", unit_of_measurement: "shots" });
+    add(`binary_sensor.${p}_co2_low`, (opts.co2 ?? 22) <= 4 ? "on" : "off", { label: "CO2 low", device_class: "problem" });
     add(`sensor.${p}_node_status`, "asleep", { label: "Node status" }, 60 * 11);
     add(`sensor.${p}_last_seen`, minutesAgo(opts.seen ?? 60 * 11), { label: "Last seen", device_class: "timestamp" });
+    add(`sensor.${p}_signal_strength`, opts.rssi ?? -62, { label: "Signal strength", unit_of_measurement: "dBm", device_class: "signal_strength" });
     add(`button.${p}_clear_kill_alert`, "unknown", { label: "Clear kill alert" });
     add(`button.${p}_lure_replaced`, "unknown", { label: "Lure replaced" });
+    add(`button.${p}_co2_canister_replaced`, "unknown", { label: "CO2 canister replaced" });
     add(`button.${p}_ping`, "unknown", { label: "Ping" });
   }
 
@@ -174,7 +178,7 @@
   set("binary_sensor.basement_trap_rearm", "on", { device_class: "problem" }, 18);
   // Mousetraps 1 and 2: Goodnature devices set up with `device:` only.
   goodnature(1, "Mousetrap 1");
-  goodnature(2, "Mousetrap 2", { armed: "off", lure: 12.4, lureDue: "on", strikes: 2, seen: 95 });
+  goodnature(2, "Mousetrap 2", { armed: "off", lure: 12.4, lureDue: "on", strikes: 2, seen: 95, co2: 3, rssi: -84 });
   // Kitchen: bait station, sprung, with a button on the tile.
   set("sensor.kitchen_trap_status", "sprung", {}, 95);
   set("binary_sensor.kitchen_trap_battery_low", "off", { device_class: "battery" });
@@ -234,9 +238,10 @@
   async function callService(domain, service, data, target) {
     const id = target && target.entity_id;
     await new Promise((r) => setTimeout(r, 350));
-    const p = id && id.replace(/^[a-z_]+\./, "").replace(/_(clear_kill_alert|lure_replaced|ping)$/, "");
+    const p = id && id.replace(/^[a-z_]+\./, "").replace(/_(clear_kill_alert|lure_replaced|co2_canister_replaced|ping)$/, "");
     if (id && id.endsWith("_clear_kill_alert")) set(`binary_sensor.${p}_kill_alert`, "off");
     else if (id && id.endsWith("_lure_replaced")) { set(`sensor.${p}_lure_remaining`, states[`number.${p}_lure_life`].state); set(`binary_sensor.${p}_lure_due`, "off"); }
+    else if (id && id.endsWith("_co2_canister_replaced")) setShots(p, 24);
     else if (id && id.endsWith("_ping")) { set(`sensor.${p}_last_seen`, new Date().toISOString()); set(`sensor.${p}_node_status`, "awake"); setTimeout(() => { set(`sensor.${p}_node_status`, "asleep"); push(); }, 4000); }
     else if (id === "script.kitchen_trap_reset") set("sensor.kitchen_trap_status", "armed");
     else if (domain === "input_number" && service === "set_value") set(id, data.value);
@@ -248,6 +253,12 @@
 
   const num = (id) => Number(states[id]?.state) || 0;
   const gn = (n, key) => `goodnature_trap_${n}_${key}`;
+  // The gateway's CO2 Low alert comes on at 4 shots.
+  function setShots(p, n) {
+    set(`sensor.${p}_co2_shots_remaining`, Math.max(0, n));
+    set(`binary_sensor.${p}_co2_low`, n <= 4 ? "on" : "off");
+  }
+  const shotsLeft = (n) => num(`sensor.${gn(n, "co2_shots_remaining")}`);
   const actions = {
     Garage: {
       "Catch!": () => { set("binary_sensor.garage_trap_kill", "on"); set("binary_sensor.garage_trap_rearm", "on"); set("sensor.garage_trap_strikes", num("sensor.garage_trap_strikes") + 1); set("input_number.garage_trap_bait", Math.max(0, num("input_number.garage_trap_bait") - 1)); },
@@ -264,7 +275,7 @@
       "Catch!": () => { set("binary_sensor.basement_trap_kill", "on"); set("binary_sensor.basement_trap_rearm", "on"); set("sensor.basement_trap_strikes", num("sensor.basement_trap_strikes") + 1); },
     },
     "Mousetrap 1": {
-      "Strike": () => { set(`binary_sensor.${gn(1, "kill_alert")}`, "on"); set(`sensor.${gn(1, "strikes")}`, num(`sensor.${gn(1, "strikes")}`) + 1); set(`event.${gn(1, "strike")}`, new Date().toISOString()); set(`sensor.${gn(1, "last_seen")}`, new Date().toISOString()); },
+      "Strike": () => { set(`binary_sensor.${gn(1, "kill_alert")}`, "on"); set(`sensor.${gn(1, "strikes")}`, num(`sensor.${gn(1, "strikes")}`) + 1); setShots("goodnature_trap_1", shotsLeft(1) - 1); set(`event.${gn(1, "strike")}`, new Date().toISOString()); set(`sensor.${gn(1, "last_seen")}`, new Date().toISOString()); },
       // A Z-Wave trap reports a strike as separate updates: the kill alert, then the count, the event and last seen.
       "Strike (Z-Wave style)": () => {
         set(`binary_sensor.${gn(1, "kill_alert")}`, "on");
@@ -274,6 +285,8 @@
           () => set(`sensor.${gn(1, "last_seen")}`, new Date().toISOString()),
         ].forEach((step, n) => setTimeout(() => { step(); push(); }, 300 * (n + 1)));
       },
+      "CO₂ −8 shots": () => setShots("goodnature_trap_1", shotsLeft(1) - 8),
+      "Weak signal": () => set(`sensor.${gn(1, "signal_strength")}`, num(`sensor.${gn(1, "signal_strength")}`) < -80 ? -62 : -91),
       "Lure −60 d": () => set(`sensor.${gn(1, "lure_remaining")}`, Math.max(0, num(`sensor.${gn(1, "lure_remaining")}`) - 60).toFixed(1)),
       "Lure due": () => set(`binary_sensor.${gn(1, "lure_due")}`, states[`binary_sensor.${gn(1, "lure_due")}`].state === "on" ? "off" : "on"),
       "Battery low alert": () => set(`binary_sensor.${gn(1, "battery_low")}`, states[`binary_sensor.${gn(1, "battery_low")}`].state === "on" ? "off" : "on"),

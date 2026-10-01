@@ -349,13 +349,13 @@ export default async function run(browser) {
       boxShadow: anims.filter((a) => a.effect.getKeyframes().some((k) => "boxShadow" in k)).map((a) => a.animationName),
       ringOpacityOnly: anims.filter((a) => a.effect.pseudoElement === "::after" && a.animationName === "fade-pulse")
         .map((a) => Object.keys(a.effect.getKeyframes()[0]).filter((k) => !["offset", "easing", "composite", "computedOffset"].includes(k))),
-      stale: getComputedStyle(c.q(".dot.stale span")).animationIterationCount,
+      late: getComputedStyle(c.q(".m-last_seen.is-warn .ic-seen")).animationIterationCount,
     };
     c.done();
     return out;
   });
   check("animations: a catch pulses an inner ring by opacity, not an animated box-shadow",
-    alerts, { tile: "none", ring: ["fade-pulse", true, "none"], boxShadow: [], ringOpacityOnly: [["opacity"]], stale: "infinite" });
+    alerts, { tile: "none", ring: ["fade-pulse", true, "none"], boxShadow: [], ringOpacityOnly: [["opacity"]], late: "infinite" });
 
   const replay = await page.evaluate(async () => {
     const { st } = T;

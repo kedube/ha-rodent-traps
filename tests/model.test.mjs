@@ -35,6 +35,8 @@ export default async function run(browser) {
       got[k + "_title"] = m.getAttribute("title");
       got[k + "_hold"] = m.dataset.hold || null;
       got[k + "_cls"] = m.className;
+      const bars = m.querySelector(".ic-signal");
+      if (bars) got[k + "_bars"] = bars.querySelectorAll("rect:not(.off)").length;
     }
     return got;
   }
@@ -109,7 +111,7 @@ export default async function run(browser) {
   const g = read(card);
   check("device: name, area, style, roles", g, {
     name: "Mousetrap 1", loc: "Attic", art: "goodnature", chip: "Armed",
-    strikes: "7", last_strike: "3 d ago", battery: "86%", bait: "179 d", kill: "Clear", trap: "Armed", link: "11 h ago", link_label: "Last seen",
+    strikes: "7", last_strike: "3 d ago", battery: "86%", bait: "179 d", kill: "Clear", trap: "Armed", link: "Asleep", link_label: "Link", last_seen: "11 h ago", last_seen_label: "Last seen",
     kill_hold: "kill", bait_hold: "bait", link_hold: "link",
   });
   check("device: entity mapping", {
@@ -200,10 +202,10 @@ export default async function run(browser) {
   }
 
   // 9. last seen / last strike
-  run("stale after threshold", { last_seen: "sensor.ls", kill: "binary_sensor.k" }, { "sensor.ls": st(ago(13 * 60), { device_class: "timestamp" }), "binary_sensor.k": st("off") }, { chip: "Not seen recently", link: "13 h ago" }, { card: { stale_after: "12h" } });
+  run("stale after threshold", { last_seen: "sensor.ls", kill: "binary_sensor.k" }, { "sensor.ls": st(ago(13 * 60), { device_class: "timestamp" }), "binary_sensor.k": st("off") }, { chip: "Not seen recently", last_seen: "13 h ago", last_seen_label: "Last seen, late" }, { card: { stale_after: "12h" } });
   run("offline after threshold", { last_seen: "sensor.ls", kill: "binary_sensor.k" }, { "sensor.ls": st(ago(49 * 60), { device_class: "timestamp" }), "binary_sensor.k": st("off") }, { chip: "Offline", scene: "offline" }, { card: { stale_after: "12h", offline_after: { days: 2 } } });
   run("per-trap threshold beats card", { last_seen: "sensor.ls", kill: "binary_sensor.k", offline_after: 1 }, { "sensor.ls": st(ago(90), { device_class: "timestamp" }), "binary_sensor.k": st("off") }, { chip: "Offline" }, { card: { offline_after: "2d" } });
-  run("recent = fine", { last_seen: "sensor.ls", kill: "binary_sensor.k" }, { "sensor.ls": st(ago(60), { device_class: "timestamp" }), "binary_sensor.k": st("off") }, { chip: "Armed", link: "1 h ago" }, { card: { stale_after: "12h" } });
+  run("recent = fine", { last_seen: "sensor.ls", kill: "binary_sensor.k" }, { "sensor.ls": st(ago(60), { device_class: "timestamp" }), "binary_sensor.k": st("off") }, { chip: "Armed", last_seen: "1 h ago", last_seen_label: "Last seen" }, { card: { stale_after: "12h" } });
   run("event entity as strikes -> last strike", { strikes: "event.s" }, { "event.s": st(ago(3 * 1440), { event_type: "strike" }) }, { last_strike: "3 d ago", strikes: undefined });
   run("event never fired", { last_strike: "event.s" }, { "event.s": st("unknown") }, { last_strike: "—" });
 
@@ -227,8 +229,75 @@ export default async function run(browser) {
     try { document.createElement("rodent-trap-card").setConfig(cfg); out.push(`FAIL validation ${label}`); }
     catch (e) { out.push(`ok   validation ${label}: ${e.message}`); }
   }
+  // 14. CO2 shots: a canister of 24 unless max says otherwise, and co2_low (20%) is 4 shots of it.
+  const shots = (n, attrs = { unit_of_measurement: "shots" }) => ({ "sensor.co2": st(n, attrs) });
+  const has = (cls, c) => (cls || "").split(" ").includes(c);
+  run("CO2: shots against a 24-shot canister", { co2: "sensor.co2" }, shots(22), { co2: "22 shots", co2_label: "CO₂", chip: "All good" });
+  run("CO2: 4 of 24 shots is low", { co2: "sensor.co2" }, shots(4), { chip: "Low CO₂", co2_label: "CO₂ low" });
+  run("CO2: 5 of 24 shots is not", { co2: "sensor.co2" }, shots(5), { chip: "All good", co2_label: "CO₂" });
+  run("CO2: none left", { co2: "sensor.co2", kill: "binary_sensor.k" }, { ...shots(0), "binary_sensor.k": st("off") }, { chip: "Out of CO₂", co2_label: "Out of CO₂" });
+  run("CO2: a count without a unit shows the canister size", { co2: "counter.co2" }, { "counter.co2": st(18) }, { co2: "18/24" });
+  run("CO2: max sets another canister size", { co2: { entity: "sensor.co2", max: 30 } }, shots(5), { chip: "Low CO₂" });
+  run("CO2: a percentage", { co2: "sensor.co2" }, shots(50, { unit_of_measurement: "%" }), { co2: "50%", chip: "All good" });
+  run("CO2: co2_low on the trap", { co2: "sensor.co2", co2_low: 50 }, shots(10), { chip: "Low CO₂" });
+  run("CO2: co2_low on the card", { co2: "sensor.co2" }, shots(10), { chip: "Low CO₂" }, { card: { co2_low: 50 } });
+  run("CO2: the device's low alert beats the threshold", { co2: { entity: "sensor.co2", low_entity: "binary_sensor.co2_low" } },
+    { ...shots(22), "binary_sensor.co2_low": st("on") }, { co2: "22 shots", chip: "Low CO₂" });
+  run("CO2: unavailable is a dash", { co2: "sensor.co2", kill: "binary_sensor.k" }, { "sensor.co2": st("unavailable"), "binary_sensor.k": st("off") }, { co2: "—", chip: "Armed" });
+  {
+    const c = mount({ traps: [{ co2: "sensor.co2", style: "goodnature" }, { co2: "sensor.co2b", style: "goodnature" }] },
+      { states: { ...shots(0), "sensor.co2b": st(3, { unit_of_measurement: "shots" }) } });
+    const [out, low] = [read(c, 0), read(c, 1)];
+    const cans = [...c.shadowRoot.querySelectorAll(".gn-can")].map((x) => x.classList.contains("empty"));
+    check("CO2: none left is red, low is amber, and an empty canister is drawn empty", { out: has(out.co2_cls, "is-bad"), low: has(low.co2_cls, "is-warn"), cans: cans.join() },
+      { out: true, low: true, cans: "true,false" });
+    c.remove();
+  }
+
+  // 15. Signal strength: 0-4 bars, one per fifth of -100 to -50 dBm, and never a warning.
+  const dbm = (n) => ({ "sensor.rssi": st(n, { unit_of_measurement: "dBm", device_class: "signal_strength" }) });
+  for (const [n, bars] of [[-45, 4], [-60, 4], [-61, 3], [-70, 3], [-80, 2], [-81, 1], [-99, 1], [-100, 0], [-110, 0]]) {
+    run(`signal ${n} dBm = ${bars} bars`, { signal: "sensor.rssi" }, dbm(n), { signal: `${n} dBm`, signal_bars: bars, signal_label: "Signal" });
+  }
+  run("signal: a percentage", { signal: "sensor.wifi" }, { "sensor.wifi": st(72, { unit_of_measurement: "%" }) }, { signal: "72%", signal_bars: 3 });
+  run("signal: Zigbee LQI", { signal: "sensor.lq" }, { "sensor.lq": st(180, { unit_of_measurement: "lqi" }) }, { signal: "180 LQI", signal_bars: 3 });
+  run("signal: a positive number without a unit is LQI", { signal: "sensor.lq" }, { "sensor.lq": st(120) }, { signal: "120", signal_bars: 2 });
+  run("signal: a negative number without a unit is dBm", { signal: "sensor.rssi" }, { "sensor.rssi": st(-70) }, { signal: "-70", signal_bars: 3 });
+  run("signal: min and max set the span", { signal: { entity: "sensor.rssi", min: -90, max: -70 } }, dbm(-75), { signal_bars: 3 });
+  run("signal: an attribute", { signal: { entity: "device_tracker.t", attribute: "rssi" } }, { "device_tracker.t": st("home", { rssi: -66 }) }, { signal: "-66", signal_bars: 3 });
+  run("signal: words show as they are", { signal: "sensor.q" }, { "sensor.q": st("good") }, { signal: "Good", signal_bars: 0 });
+  run("signal: weak is not a warning", { signal: "sensor.rssi", kill: "binary_sensor.k" }, { ...dbm(-98), "binary_sensor.k": st("off") }, { chip: "Armed", signal_bars: 1 });
+  run("signal: unavailable is a dash", { signal: "sensor.rssi", kill: "binary_sensor.k" }, { "sensor.rssi": st("unavailable"), "binary_sensor.k": st("off") },
+    { signal: "—", signal_bars: 0, chip: "Armed" });
+
+  // 16. Link and Last seen are separate readings, each with its own state.
+  const seen = (min) => ({ "sensor.ls": st(ago(min), { device_class: "timestamp" }) });
+  const both = { online: "binary_sensor.o", last_seen: "sensor.ls" };
+  run("link and last seen: two readings", both, { "binary_sensor.o": st("on"), ...seen(5) },
+    { link: "Online", link_label: "Link", last_seen: "5 min ago", last_seen_label: "Last seen", chip: "All good" });
+  {
+    const c = mount({ stale_after: "12h", offline_after: "2d", traps: [both, both] }, { states: { "binary_sensor.o": st("on"), ...seen(13 * 60) } });
+    const late = read(c, 0);
+    c.hass = { states: { "binary_sensor.o": st("on"), ...seen(3 * 1440) } };
+    const gone = read(c, 0);
+    check("late: Last seen is amber and says so, Link stays Online", { link: late.link, label: late.last_seen_label, warn: has(late.last_seen_cls, "is-warn"), chip: late.chip },
+      { link: "Online", label: "Last seen, late", warn: true, chip: "Not seen recently" });
+    check("overdue: both are grey, and Link says Offline", { link: gone.link, linkOff: has(gone.link_cls, "is-off"), seenOff: has(gone.last_seen_cls, "is-off"), label: gone.last_seen_label, chip: gone.chip },
+      { link: "Offline", linkOff: true, seenOff: true, label: "Last seen, late", chip: "Offline" });
+    c.remove();
+  }
+  const ping = { "button.ping": st("unknown", { friendly_name: "Ping" }), "button.poll": st("unknown", { friendly_name: "Poll" }) };
+  run("a Link hold moves to Last seen on a trap without Link", { last_seen: "sensor.ls", holds: { link: "button.ping" } }, { ...seen(5), ...ping },
+    { last_seen_hold: "last_seen", link_hold: undefined });
+  run("a Last seen hold moves to Link on a trap without Last seen", { online: "binary_sensor.o", holds: { last_seen: "button.ping" } }, { "binary_sensor.o": st("on"), ...ping },
+    { link_hold: "link" });
+  run("with both readings, each hold stays put", { ...both, holds: { link: "button.ping", last_seen: "button.poll" } }, { "binary_sensor.o": st("on"), ...seen(5), ...ping },
+    { link_hold: "link", last_seen_hold: "last_seen" });
+  run("CO2 and signal take holds", { co2: "sensor.co2", signal: "sensor.rssi", holds: { co2: "button.ping", signal: "button.poll" } }, { ...shots(20), ...dbm(-60), ...ping },
+    { co2_hold: "co2", signal_hold: "signal" });
+
   // stub config finds trap devices
-  const stub = customElements.get("rodent-trap-card").getStubConfig({ states: gnStates, ...gnHass });
+  const stub =customElements.get("rodent-trap-card").getStubConfig({ states: gnStates, ...gnHass });
   check("stub config uses devices", { t: JSON.stringify(stub.traps) }, { t: '[{"device":"gn"}]' });
   return out;
 });

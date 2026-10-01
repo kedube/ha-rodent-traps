@@ -11,8 +11,8 @@
   const EDITOR_TAG = "rodent-trap-card-editor";
 
   // Entity roles a trap can fill.
-  const ROLE_KEYS = ["kill", "armed", "rearm", "strikes", "last_strike", "battery", "bait", "online", "last_seen"];
-  const TRAP_KEYS = ["device", "name", "location", "style", ...ROLE_KEYS, "holds", "actions", "battery_low", "bait_low", "stale_after", "offline_after"];
+  const ROLE_KEYS = ["kill", "armed", "rearm", "strikes", "last_strike", "battery", "bait", "co2", "online", "last_seen", "signal"];
+  const TRAP_KEYS = ["device", "name", "location", "style", ...ROLE_KEYS, "holds", "actions", "battery_low", "bait_low", "co2_low", "stale_after", "offline_after"];
   // Options that only make sense on a trap. In the single-trap form they sit on the card itself, along with `style`.
   const TRAP_ONLY_KEYS = ["device", "name", "location", ...ROLE_KEYS, "holds", "actions"];
   const SHORTHAND_KEYS = TRAP_KEYS.filter((k) => k === "style" || TRAP_ONLY_KEYS.includes(k));
@@ -20,11 +20,18 @@
   const STYLE_WORDS = [...TRAP_STYLES, "auto"];
   const SORT_ORDERS = ["config", "status", "name"];
   const DURATION_KEYS = ["stale_after", "offline_after"];
-  // Readings on a tile, in display order. "trap" combines armed + rearm, "link" combines online + last_seen.
-  const METRIC_ORDER = ["strikes", "last_strike", "battery", "bait", "kill", "trap", "link"];
+  // Readings on a tile, in display order. "trap" combines armed + rearm, and "link" shows online.
+  const METRIC_ORDER = ["strikes", "last_strike", "battery", "bait", "co2", "kill", "trap", "link", "last_seen", "signal"];
+  /** The entity role a reading shows, for every reading but "trap". */
+  const roleOf = (key) => (key === "link" ? "online" : key);
   // Lookup tables keyed by user input have no prototype, so "constructor" or "toString" isn't found in them.
-  const HOLD_KEYS = { __proto__: null, kill: "kill", catch: "kill", trap: "trap", armed: "trap", rearm: "trap", strikes: "strikes", last_strike: "last_strike", battery: "battery", bait: "bait", link: "link", online: "link", last_seen: "link" };
+  const HOLD_KEYS = {
+    __proto__: null, kill: "kill", catch: "kill", trap: "trap", armed: "trap", rearm: "trap", strikes: "strikes", last_strike: "last_strike",
+    battery: "battery", bait: "bait", co2: "co2", link: "link", online: "link", last_seen: "last_seen", signal: "signal",
+  };
   const HOLD_MS = 550;
+  // A Goodnature A24 CO2 canister: the full mark for a shot count that has no capacity of its own.
+  const CO2_SHOTS = 24;
 
   const CARD_DEFAULTS = {
     title: "",
@@ -35,6 +42,7 @@
     style: "snap",
     battery_low: 20,
     bait_low: 25,
+    co2_low: 20,
   };
 
   // ---------------------------------------------------------------------------
@@ -250,7 +258,14 @@
     return v;
   }
 
-  function interpretLevel(hass, r, threshold, lowRead) {
+  /** The display precision Home Assistant has for an entity's state; none for an attribute. */
+  function precisionOf(hass, ref) {
+    const reg = !ref.attribute && hass && hass.entities ? hass.entities[ref.entity] : null;
+    return reg && Number.isInteger(reg.display_precision) ? reg.display_precision : undefined;
+  }
+
+  /** `fullAt` is the full mark for a reading that is neither a percentage nor a helper with a range of its own. */
+  function interpretLevel(hass, r, threshold, lowRead, fullAt = 100) {
     const out = { level: null, text: null, low: null, empty: false, deviceLow: false };
     if (r && !r.missing && !r.unknown) {
       const { ref, raw, stateObj, domain } = r;
@@ -264,12 +279,11 @@
         const helperMax = toNum(attrs.max, NaN);
         const helper = !ref.attribute && unit !== "%" && (domain === "input_number" || domain === "number") && Number.isFinite(helperMax);
         const min = resolveNum(hass, ref.min, helper ? toNum(attrs.min, 0) : 0);
-        const max = resolveNum(hass, ref.max, helper ? helperMax : 100);
+        const max = resolveNum(hass, ref.max, helper ? helperMax : unit === "%" ? 100 : fullAt);
         // A voltage has no percentage until the user says what empty and full are.
         const voltage = /^m?v$/i.test(String(unit).trim()) || (!ref.attribute && attrs.device_class === "voltage");
         const ranged = max > min && !(voltage && !given(ref.min) && !given(ref.max));
-        const reg = !ref.attribute && hass && hass.entities ? hass.entities[ref.entity] : null;
-        const fmt = { precision: reg && Number.isInteger(reg.display_precision) ? reg.display_precision : undefined, displayUnit: ref.display_unit };
+        const fmt = { precision: precisionOf(hass, ref), displayUnit: ref.display_unit };
         if (!ranged) {
           // No usable range (a max entity reporting 0, say): show the value, but don't call it low or empty.
           out.text = unit === "%" ? `${formatNumber(n, "", fmt)}%` : formatNumber(n, unit, fmt);
@@ -310,6 +324,34 @@
     if (!r || r.missing || r.unknown) return null;
     const n = Number(r.raw);
     return Number.isFinite(n) ? n : null;
+  }
+
+  /**
+   * Signal strength as 0-4 bars, one for every fifth of its span: dBm (or a negative number without a unit) spans
+   * -100 to -50, Zigbee LQI (or a positive number without a unit) 0 to 255, and a percentage 0 to 100. `min` and
+   * `max` change the span. Anything above the bottom of it is at least one bar: a weak link still works.
+   */
+  function interpretSignal(hass, r) {
+    const out = { bars: null, text: null };
+    if (!r || r.missing || r.unknown) return out;
+    const { ref, raw, stateObj } = r;
+    const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
+    if (!Number.isFinite(n)) {
+      out.text = titleCase(raw);
+      return out;
+    }
+    const attrs = stateObj.attributes || {};
+    const unit = String(ref.unit !== undefined ? ref.unit : ref.attribute ? "" : attrs.unit_of_measurement || "").trim();
+    const span = /^dbm$/i.test(unit) || (/^(db)?$/i.test(unit) && n < 0) ? [-100, -50] : unit === "%" ? [0, 100] : /^(lqi)?$/i.test(unit) ? [0, 255] : [];
+    const min = resolveNum(hass, ref.min, span[0]);
+    const max = resolveNum(hass, ref.max, span[1]);
+    if (max > min) {
+      const level = ((n - min) / (max - min)) * 100;
+      out.bars = level > 0 ? clamp(Math.floor(level / 20), 1, 4) : 0;
+    }
+    const fmt = { precision: precisionOf(hass, ref) };
+    out.text = unit === "%" ? `${formatNumber(n, "", fmt)}%` : formatNumber(n, /^lqi$/i.test(unit) ? "LQI" : unit, fmt);
+    return out;
   }
 
   /** An ISO string for a time in ms, or null when it isn't a real date (new Date(1e20) is Invalid Date). */
@@ -370,13 +412,21 @@
     { role: "bait_low", domains: ["binary_sensor", "sensor"], re: /((lure|bait)_(due|low|empty|replace|replacement)|replace_(lure|bait))/ },
     { role: "bait_max", domains: ["number", "sensor"], re: /(lure|bait)_(life|lifetime|duration|capacity|max)$/ },
     { role: "bait", domains: ["sensor", "number"], re: /((lure|bait)_(remaining|level|left|days_left|life_remaining)|remaining_(lure|bait)|(^|_)(lure|bait)$)/ },
+    // CO2 shots left in a gas-powered trap's canister. Not a CO2 concentration sensor.
+    { role: "co2_low", domains: ["binary_sensor", "sensor"], re: /(^|_)((co2|canister|cartridge)_(low|due|empty)|replace_(co2|canister|cartridge))$/ },
+    { role: "co2_max", domains: ["number", "sensor"], re: /(^|_)((co2|canister|cartridge)_(capacity|max)|shots_per_(canister|cartridge))$/ },
+    { role: "co2", domains: ["sensor", "number"], re: /(^|_)(co2(_shots?)?(_remaining|_left|_level)?|(canister|cartridge|gas)_(shots_)?(remaining|left|level)|(shots?|strikes?)_(remaining|left))$/, notDc: "carbon_dioxide" },
     { role: "online", domains: ["binary_sensor"], dc: "connectivity" },
     { role: "online", domains: ["binary_sensor", "sensor"], re: /(^|_)(online|connectivity|connected|connection(_state|_status)?|availability)$/ },
     { role: "online", domains: ["sensor"], re: /node_status$/ },
     { role: "last_seen", domains: ["sensor"], re: /last_(seen|report(ed)?|heard|contact|activity|communication)/ },
+    { role: "signal", domains: ["sensor"], dc: "signal_strength" },
+    { role: "signal", domains: ["sensor"], re: /(^|_)(rssi|lqi|link_?quality|((wifi|wireless|radio)_)?signal(_strength|_level|_quality)?)$/ },
     // Hold buttons must end with the action, so "Reset kill count" is not taken for clearing the catch alert.
     { hold: "kill", domains: ["button", "input_button", "script"], re: /(^|_)(clear_(kill|catch|alert)(_alert)?|(kill|catch)_(alert_)?(clear|reset)|reset_(kill|catch)(_alert)?)$/ },
     { hold: "bait", domains: ["button", "input_button", "script"], re: /(^|_)((lure|bait)_(replaced|refilled|reset|changed|replace)|replace(d)?_(lure|bait)|refill(ed)?)$/ },
+    // "CO2 Canister Replaced", not "CO2 Shot Used".
+    { hold: "co2", domains: ["button", "input_button", "script"], re: /(^|_)((co2|canister|cartridge)(_canister|_cartridge)?_(replaced|changed|reset)|replace(d)?_(co2|canister|cartridge))$/ },
     { hold: "link", domains: ["button"], re: /ping$/ },
   ];
 
@@ -563,6 +613,8 @@
     const own = (k) => refs[k] && found.roles[k] === refs[k].entity;
     if (own("bait") && found.roles.bait_max && refs.bait.max === undefined) refs.bait = { ...refs.bait, max: found.roles.bait_max };
     if (own("bait") && found.roles.bait_low && refs.bait.low_entity === undefined) refs.bait = { ...refs.bait, low_entity: found.roles.bait_low };
+    if (own("co2") && found.roles.co2_max && refs.co2.max === undefined) refs.co2 = { ...refs.co2, max: found.roles.co2_max };
+    if (own("co2") && found.roles.co2_low && refs.co2.low_entity === undefined) refs.co2 = { ...refs.co2, low_entity: found.roles.co2_low };
     if (own("battery") && found.roles.battery_low && refs.battery.low_entity === undefined) refs.battery = { ...refs.battery, low_entity: found.roles.battery_low };
     if (!refs.battery && found.roles.battery_low && trap.battery === undefined) refs.battery = { entity: found.roles.battery_low };
     // An event entity carries the time of the last strike, not a count.
@@ -587,6 +639,14 @@
         const act = v === false || v === null || v === "none" ? null : makeAction(hass, v, true);
         if (act) holds[key] = act;
         else delete holds[key];
+      }
+    }
+    // Link and Last seen used to be one reading. A hold on one of them moves to the other when the trap shows only
+    // that one, so a device's ping, or a hold written for the old reading, still has a reading to sit on.
+    for (const [from, to] of [["link", "last_seen"], ["last_seen", "link"]]) {
+      if (holds[from] && !holds[to] && !refs[roleOf(from)] && refs[roleOf(to)]) {
+        holds[to] = holds[from];
+        delete holds[from];
       }
     }
     const specs = (Array.isArray(trap.actions) ? trap.actions : []).concat(Object.values(found.holds), Object.values(trap.holds || {}));
@@ -651,6 +711,8 @@
       lastSeen: readTime(reads.last_seen, "updated"),
       battery: interpretLevel(hass, reads.battery, toNum(trap.battery_low, cfg.battery_low), lowRead("battery")),
       bait: interpretLevel(hass, reads.bait, toNum(trap.bait_low, cfg.bait_low), lowRead("bait")),
+      co2: interpretLevel(hass, reads.co2, toNum(trap.co2_low, cfg.co2_low), lowRead("co2"), CO2_SHOTS),
+      signal: interpretSignal(hass, reads.signal),
       kill: interpretBool(reads.kill, "kill"),
       armed: interpretBool(reads.armed, "armed"),
       rearmReported: interpretBool(reads.rearm, "rearm"),
@@ -677,12 +739,15 @@
     // Connectivity: the online entity, overridden by how long ago the trap was last seen.
     let online = interpretBool(reads.online, "online");
     let offlineSince = reads.online && reads.online.since;
+    // stale: last seen longer ago than stale_after. overdue: longer ago than offline_after, which makes it offline.
     m.stale = false;
+    m.overdue = false;
     if (m.lastSeen) {
       const age = Date.now() - Date.parse(m.lastSeen);
       const offlineAfter = parseDuration(trap.offline_after !== undefined ? trap.offline_after : cfg.offline_after);
       const staleAfter = parseDuration(trap.stale_after !== undefined ? trap.stale_after : cfg.stale_after);
-      if (offlineAfter && age > offlineAfter) online = false;
+      m.overdue = !!offlineAfter && age > offlineAfter;
+      if (m.overdue) online = false;
       else if (staleAfter && age > staleAfter) m.stale = true;
       if (online === false) offlineSince = m.lastSeen;
     }
@@ -704,6 +769,8 @@
     if (m.battery.low) warnings.push("Low battery");
     if (m.bait.empty) warnings.push("Out of bait");
     else if (m.bait.low) warnings.push("Low bait");
+    if (m.co2.empty) warnings.push("Out of CO\u2082");
+    else if (m.co2.low) warnings.push("Low CO\u2082");
     if (m.stale) warnings.push("Not seen recently");
     if (m.missing.length) warnings.push("Entity not found");
     m.warnings = warnings;
@@ -780,6 +847,8 @@
       lastSeen: null,
       battery: level(),
       bait: level(),
+      co2: level(),
+      signal: { bars: null, text: null },
       kill: null,
       armed: null,
       rearmReported: null,
@@ -788,6 +857,7 @@
       asleep: false,
       online: null,
       stale: false,
+      overdue: false,
       since: { kill: null, rearm: null, online: null },
       rearmEntity: null,
       armKnown: false,
@@ -804,16 +874,13 @@
 
   function metricKeys(m) {
     const has = (k) => m.configured.includes(k);
-    return METRIC_ORDER.filter((k) =>
-      k === "trap" ? has("armed") || has("rearm") : k === "link" ? has("online") || has("last_seen") : has(k)
-    );
+    return METRIC_ORDER.filter((k) => (k === "trap" ? has("armed") || has("rearm") : has(roleOf(k))));
   }
 
   function metricEntities(m, key) {
     const e = m.entities;
     if (key === "trap") return [e.armed, e.rearm].filter(Boolean);
-    if (key === "link") return [e.online, e.last_seen].filter(Boolean);
-    return [e[key]].filter(Boolean);
+    return [e[roleOf(key)]].filter(Boolean);
   }
 
   // ---------------------------------------------------------------------------
@@ -828,6 +895,7 @@
     shield: `<svg viewBox="0 0 24 24" class="ic ic-armed" aria-hidden="true"><path d="M12 2.5 19.5 5v6.2c0 4.6-3.1 8.6-7.5 10.3-4.4-1.7-7.5-5.7-7.5-10.3V5L12 2.5Z"/><path d="m8.5 12 2.4 2.4 4.6-4.8" class="tick"/></svg>`,
     question: `<svg viewBox="0 0 24 24" class="ic ic-question" aria-hidden="true"><path d="M12 2.5 19.5 5v6.2c0 4.6-3.1 8.6-7.5 10.3-4.4-1.7-7.5-5.7-7.5-10.3V5L12 2.5Z"/><path d="M9.7 9.3a2.4 2.4 0 1 1 3.3 2.2c-.7.3-1 .8-1 1.5v.6" class="q"/><circle cx="12" cy="16.6" r="1.1" class="qd"/></svg>`,
     clock: `<svg viewBox="0 0 24 24" class="ic ic-clock" aria-hidden="true"><circle cx="12" cy="12" r="8.8"/><path d="M12 7v5.3l3.4 2.1"/></svg>`,
+    seen: `<svg viewBox="0 0 24 24" class="ic ic-seen" aria-hidden="true"><path d="M4.5 12A8 8 0 1 1 6.84 17.66"/><path d="M2.2 9.9 4.5 12.4 6.8 9.9"/><path d="M12.5 8v4.5l3.2 1.9"/></svg>`,
     wifiOff: `<svg viewBox="0 0 24 24" class="ic ic-wifi-off" aria-hidden="true"><path d="M2 8.5a15 15 0 0 1 20 0M5.5 12a10 10 0 0 1 13 0M9 15.5a5 5 0 0 1 6 0" class="waves"/><circle cx="12" cy="19" r="1.6"/><path d="M4 3 20 21" class="slash"/></svg>`,
   };
 
@@ -835,6 +903,18 @@
     const lvl = b.level !== null ? b.level : b.low ? 12 : b.low === false ? 100 : 0;
     const w = Math.max(lvl > 0 ? 1.5 : 0, (19 * lvl) / 100);
     return `<svg viewBox="0 0 28 16" class="ic ic-batt" aria-hidden="true"><rect x="1" y="2" width="23" height="12" rx="3" class="shell"/><rect x="24.6" y="5.5" width="2.6" height="5" rx="1.2" class="nub"/><rect x="3" y="4" width="${w.toFixed(2)}" height="8" rx="1.4" class="charge"/></svg>`;
+  }
+
+  /** A gas canister, filled to the CO2 level. */
+  function co2Icon(c) {
+    const lvl = c.level !== null ? c.level : c.low ? 12 : c.low === false ? 100 : 0;
+    const h = lvl > 0 ? Math.max(1.5, (13.4 * lvl) / 100) : 0;
+    return `<svg viewBox="0 0 24 24" class="ic ic-co2" aria-hidden="true"><path d="M9.5 2.6h5M12 2.6V5" class="valve"/><rect x="7.5" y="5" width="9" height="17" rx="3.5" class="shell"/><rect x="9.3" y="${(20.2 - h).toFixed(2)}" width="5.4" height="${h.toFixed(2)}" rx="1.4" class="gas"/></svg>`;
+  }
+
+  function signalIcon(s) {
+    const bars = [0, 1, 2, 3].map((i) => `<rect x="${3 + i * 5}" y="${17 - i * 4}" width="3.4" height="${4 + i * 4}" rx="1"${i < (s.bars || 0) ? "" : ` class="off"`}/>`);
+    return `<svg viewBox="0 0 24 24" class="ic ic-signal" aria-hidden="true">${bars.join("")}</svg>`;
   }
 
   function cheeseIcon(b, uid) {
@@ -922,13 +1002,14 @@
   function goodnatureStage(m) {
     const lvl = baitLevel(m);
     const lure = (12.4 * lvl) / 100;
+    const noGas = m.configured.includes("co2") && m.co2.empty;
     return `
     <ellipse class="shadow" cx="80" cy="82" rx="50" ry="3.2"/>
     <rect class="post" x="38" y="8" width="15" height="74" rx="1.5"/>
     <path class="grain" d="M42.5 14V78M47.5 24V72M50 10V40"/>
     <rect class="gn-bracket" x="51" y="29" width="13" height="4" rx="1"/>
     <rect class="gn-bracket" x="51" y="50" width="13" height="4" rx="1"/>
-    <rect class="gn-can" x="67.5" y="16.5" width="15" height="10" rx="3"/>
+    <rect class="gn-can${noGas ? " empty" : ""}" x="67.5" y="16.5" width="15" height="10" rx="3"/>
     <rect class="gn-can-band" x="67.5" y="20" width="15" height="2.6"/>
     <rect class="gn-body" x="62" y="25" width="26" height="36" rx="6"/>
     <rect class="gn-shine" x="65.5" y="29" width="3" height="27" rx="1.5"/>
@@ -1000,12 +1081,18 @@
   // Tile rendering
   // ---------------------------------------------------------------------------
 
-  const METRIC_LABELS = { strikes: "Strikes", last_strike: "Last strike", battery: "Battery", bait: "Bait", kill: "Catch", trap: "Trap", link: "Link" };
+  const METRIC_LABELS = {
+    strikes: "Strikes", last_strike: "Last strike", battery: "Battery", bait: "Bait", co2: "CO\u2082", kill: "Catch", trap: "Trap", link: "Link",
+    last_seen: "Last seen", signal: "Signal",
+  };
   // A reading whose value already says it's low or out ("Low", "Empty", "Critical") doesn't repeat it in its label.
   const SAYS_LOW = /\b(low|critical|empty|out|none|depleted|gone|due|replace)\b/i;
 
-  /** Long values get a smaller font, so they fit rather than being cut off. */
-  const fitClass = (text) => (text.length > 10 ? " fit-xs" : text.length > 7 ? " fit-s" : "");
+  /**
+   * Long values get a smaller font, so they fit rather than being cut off. For the smaller step an m or a w counts as
+   * one and a half letters: "-62 dBm" is wider than "Caught!", the longest value that fits two readings to a narrow tile.
+   */
+  const fitClass = (text) => (text.length > 10 ? " fit-xs" : text.length + (text.match(/[mw]/gi) || []).length / 2 > 7 ? " fit-s" : "");
 
   /** A reading's accessible name, "Battery low: 8%". A dash is read out as a word, not as punctuation. */
   const readingName = (label, text, missing) => `${label}: ${text === DASH ? (missing ? "not found" : "unknown") : text}`;
@@ -1067,6 +1154,12 @@
           add(cheeseIcon(m.bait, uid), esc(text), text, m.bait.empty ? "is-bad" : m.bait.low ? "is-warn" : m.bait.text ? "" : "is-dim", word);
           break;
         }
+        case "co2": {
+          const text = m.co2.text || DASH;
+          const word = m.co2.empty ? "Out of CO\u2082" : m.co2.low && "CO\u2082 low";
+          add(co2Icon(m.co2), esc(text), text, m.co2.empty ? "is-bad" : m.co2.low ? "is-warn" : m.co2.text ? "" : "is-dim", word);
+          break;
+        }
         case "kill": {
           const text = m.kill === null ? DASH : m.kill ? "Caught!" : "Clear";
           add(m.kill === false ? ICONS.check : ICONS.bell, text, text, m.kill ? "is-bad" : m.kill === false ? "is-good" : "is-dim");
@@ -1079,16 +1172,20 @@
           break;
         }
         case "link": {
-          const up = m.online === false ? "down" : m.stale ? "stale" : m.online || m.lastSeen ? "up" : "";
-          const dot = `<span class="dot ${up}" aria-hidden="true"><span></span></span>`;
-          const cls = m.online === false ? "is-off" : m.stale ? "is-warn" : "";
-          if (m.entities.last_seen) {
-            const label = m.stale ? "Last seen, late" : "Last seen";
-            out.push(metric(key, entity, dot, timeValue(m.lastSeen), relTime(m.lastSeen) || DASH, label, cls + (m.lastSeen ? "" : " is-dim"), hold, busy));
-          } else {
-            const text = m.online === null ? DASH : m.online ? (m.asleep ? "Asleep" : "Online") : "Offline";
-            add(dot, text, text, cls + (m.online === null ? " is-dim" : ""));
-          }
+          const up = m.online === false ? "down" : m.online ? "up" : "";
+          const text = m.online === null ? DASH : m.online ? (m.asleep ? "Asleep" : "Online") : "Offline";
+          add(`<span class="dot ${up}" aria-hidden="true"><span></span></span>`, text, text, m.online === false ? "is-off" : m.online === null ? "is-dim" : "");
+          break;
+        }
+        case "last_seen": {
+          // Late enough to count as offline (offline_after) is grey, like the trap; only late (stale_after) is amber.
+          const cls = m.overdue ? "is-off" : m.stale ? "is-warn" : m.lastSeen ? "" : "is-dim";
+          add(ICONS.seen, timeValue(m.lastSeen), relTime(m.lastSeen) || DASH, cls, (m.overdue || m.stale) && "Last seen, late");
+          break;
+        }
+        case "signal": {
+          const text = m.signal.text || DASH;
+          add(signalIcon(m.signal), esc(text), text, m.signal.text ? "" : "is-dim");
           break;
         }
       }
@@ -1490,18 +1587,24 @@ ha-card { overflow: hidden; }
 /* A dark "?": white on amber is under 2:1. */
 .ic-question .q { fill: none; stroke: #1a1a1a; stroke-width: 2; stroke-linecap: round; }
 .ic-question .qd { fill: #1a1a1a; }
-.ic-clock circle, .ic-clock path { fill: none; stroke: var(--rt-text2); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.ic-clock circle, .ic-clock path, .ic-seen path { fill: none; stroke: var(--rt-text2); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .bump .ic-clock path { transform-box: view-box; transform-origin: 12px 12px; animation: spin .8s ease-out; }
+/* A trap that is late checking in keeps pulsing until it does. */
+.is-warn .ic-seen { animation: fade-pulse 2.4s ease-in-out infinite; }
+.is-warn .ic-seen path { stroke: var(--rt-warn-ink); }
+.ic-co2 .shell, .ic-co2 .valve { fill: none; stroke: var(--rt-text2); stroke-width: 1.6; stroke-linecap: round; }
+.ic-co2 .gas { fill: var(--rt-ok); transition: height .6s ease, y .6s ease; }
+.is-warn .ic-co2 .gas { fill: var(--rt-bad); }
+.ic-signal rect { fill: var(--rt-text2); }
+.ic-signal .off { opacity: .25; }
 .ic-rearm { fill: var(--rt-warn-ink); }
 .is-warn .ic-rearm { animation: spin 2.8s linear infinite; }
 .ic-wifi-off { fill: var(--rt-off-fg); }
 .ic-wifi-off .waves, .ic-wifi-off .slash { fill: none; stroke: var(--rt-off-fg); stroke-width: 2; stroke-linecap: round; }
 .dot { position: relative; width: 12px; height: 12px; border-radius: 50%; background: var(--rt-off); }
 .dot.up { background: var(--rt-ok); }
-.dot.stale { background: var(--rt-warn-ink); }
-/* A trap that checks in pings a few times and settles; a late one keeps pinging. */
-.dot.up span, .dot.stale span { position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: 50%; background: inherit; animation: ping 2.4s cubic-bezier(0, 0, .2, 1) 3; }
-.dot.stale span { animation-iteration-count: infinite; }
+/* A trap that comes online pings a few times and settles. */
+.dot.up span { position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: 50%; background: inherit; animation: ping 2.4s cubic-bezier(0, 0, .2, 1) 3; }
 .dot.down { background: transparent; border: 2px solid var(--rt-off-fg); box-sizing: border-box; }
 
 /* banners, confirmation and actions */
@@ -1640,6 +1743,7 @@ ha-card { overflow: hidden; }
 .art-goodnature { --peek: 132px; }
 .scene .gn-bracket { fill: var(--rt-metal); }
 .scene .gn-can { fill: var(--rt-metal-hi); stroke: var(--rt-metal); stroke-width: .8; }
+.scene .gn-can.empty { stroke: var(--rt-bad); }
 .scene .gn-can-band { fill: var(--rt-can-band); }
 .scene .gn-body { fill: var(--rt-gn-body); stroke: var(--rt-text); stroke-opacity: .18; stroke-width: .8; }
 .scene .gn-shine { fill: rgba(255, 255, 255, .13); }
@@ -1715,8 +1819,8 @@ ha-card { overflow: hidden; }
 
 /* Forced colours (Windows High Contrast and the like) repaint text, borders and outlines in a few system colours and
    drop backgrounds and shadows, so tints, dots and the status stripe would all vanish. Here what they show becomes a
-   border, or a shape in a system colour: a filled dot for OK, Highlight for a catch, a square for a warning, grey for
-   offline or unknown, and a dashed ring for a trap that's late checking in. */
+   border, or a shape in a system colour: a filled dot for OK, Highlight for a catch, a square for a warning, and grey
+   for offline or unknown. A reading that needs attention (a late check-in, say) gets an outline. */
 @media (forced-colors: active) {
   .chip, .banner, .confirm, .flash { border: 1px solid CanvasText; }
   .metric.is-warn, .metric.is-bad, .metric.is-off { outline: 1px solid CanvasText; outline-offset: -1px; }
@@ -1728,7 +1832,6 @@ ha-card { overflow: hidden; }
   .chip.s-offline .chip-dot, .chip.s-unknown .chip-dot { background: transparent; border: 2px solid GrayText; box-sizing: border-box; }
   .dot { background: GrayText; }
   .dot.up { background: CanvasText; }
-  .dot.stale { background: transparent; border: 2px dashed CanvasText; box-sizing: border-box; }
   .dot.down { background: transparent; border-color: GrayText; }
   .tile::before { background: transparent; }
   .tile.s-kill::before { background: Highlight; }
@@ -1897,7 +2000,7 @@ ha-card { overflow: hidden; }
       (t.actions || []).forEach((a, n) => checkAction(a, `${at}actions[${n}]`));
       if (t.holds !== undefined && (typeof t.holds !== "object" || Array.isArray(t.holds))) throw new Error(`${at}holds must be a mapping.`);
       for (const [k, v] of Object.entries(t.holds || {})) {
-        if (!HOLD_KEYS[k]) throw new Error(`${at}holds.${k} is not a reading (use kill, trap, strikes, last_strike, battery, bait or link).`);
+        if (!HOLD_KEYS[k]) throw new Error(`${at}holds.${k} is not a reading (use kill, trap, strikes, last_strike, battery, bait, co2, link, last_seen or signal).`);
         checkAction(v, `${at}holds.${k}`);
       }
     });
@@ -1925,7 +2028,7 @@ ha-card { overflow: hidden; }
   function focusSelector(el) {
     if (el.dataset.confirm) return `[data-confirm="${el.dataset.confirm}"]`;
     if (el.dataset.act) return `[data-act="${el.dataset.act}"]`;
-    const reading = el.classList.contains("metric") && /(?:^|\s)m-([a-z_]+)/.exec(el.className);
+    const reading = el.classList.contains("metric") && /(?:^|\s)m-([a-z0-9_]+)/.exec(el.className);
     if (reading) return `.metric.m-${reading[1]}`;
     if (el.classList.contains("banner")) return ".banner";
     return ".name-btn";
@@ -2701,6 +2804,8 @@ ha-card { overflow: hidden; }
   const STARTER_ROLES = [
     ["online", /node_status/],
     ["battery", /batt/],
+    ["co2", /(co2|shots)/],
+    ["signal", /(signal|rssi|lqi|linkquality)/],
     ["strikes", /(total_kills|kill_count|kills_total|strikes?|catches|catch_count|count)/],
     ["kill", /(kills?_present|kill|catch|caught|captured|occupied|triggered|alarm|alert)/],
     ["bait", /(bait|cheese|lure)/],
@@ -2774,6 +2879,7 @@ ha-card { overflow: hidden; }
     style: "Illustration",
     battery_low: "Low battery at or below (%)",
     bait_low: "Low bait at or below (%)",
+    co2_low: "Low CO\u2082 at or below (%)",
     stale_after: "Mark stale when not seen for",
     offline_after: "Mark offline when not seen for",
     device: "Device",
@@ -2786,13 +2892,17 @@ ha-card { overflow: hidden; }
     last_strike: "Last strike",
     battery: "Battery",
     bait: "Bait remaining",
+    co2: "CO\u2082 shots remaining",
     online: "Online / connectivity",
     last_seen: "Last seen",
+    signal: "Signal strength",
     actions: "Buttons on the tile",
     hold_kill: "Hold Catch to run",
     hold_trap: "Hold Trap to run",
     hold_bait: "Hold Bait to run",
-    hold_link: "Hold Link / Last seen to run",
+    hold_co2: "Hold CO\u2082 to run",
+    hold_link: "Hold Link to run",
+    hold_last_seen: "Hold Last seen to run",
   };
 
   const EDITOR_HELPERS = {
@@ -2804,8 +2914,10 @@ ha-card { overflow: hidden; }
     last_strike: "Event entity, timestamp sensor or date and time helper.",
     battery: "Percentage sensor, or a binary battery sensor (on = low). A voltage shows as a value until you set min and max (empty and full) in YAML.",
     bait: "Percentage, a value with a min\u2013max range, words like \u201chalf\u201d, or a binary sensor (on = low).",
+    co2: `Shots left in a gas-powered trap's CO\u2082 canister (out of ${CO2_SHOTS}; set max in YAML for another size), or a percentage.`,
     online: "Connectivity sensor or Z-Wave node status. Leave blank to infer from the other entities.",
     last_seen: "Timestamp sensor or date and time helper. Combine with the stale/offline thresholds.",
+    signal: "RSSI in dBm, a percentage or Zigbee LQI, shown as 0\u20134 bars.",
     actions: "Buttons, scripts or scenes. Pressing one runs it straight away.",
   };
 
@@ -2821,10 +2933,8 @@ ha-card { overflow: hidden; }
 
   // The thresholds show their default as a placeholder, not as a value: a value the form fills in comes back on every
   // keystroke, so clearing the field to type a new number would give "201".
-  const LOW_FIELDS = [
-    { name: "battery_low", default: CARD_DEFAULTS.battery_low, selector: pct },
-    { name: "bait_low", default: CARD_DEFAULTS.bait_low, selector: pct },
-  ];
+  const LOW_KEYS = ["battery_low", "bait_low", "co2_low"];
+  const LOW_FIELDS = LOW_KEYS.map((name) => ({ name, default: CARD_DEFAULTS[name], selector: pct }));
 
   const GENERAL_SCHEMA = [
     { name: "title", selector: { text: {} } },
@@ -2862,7 +2972,7 @@ ha-card { overflow: hidden; }
     },
   ];
 
-  const HOLD_FIELDS = ["kill", "trap", "bait", "link"];
+  const HOLD_FIELDS = ["kill", "trap", "bait", "co2", "link", "last_seen"];
 
   const TRAP_SCHEMA = [
     { name: "device", selector: { device: {} } },
@@ -2881,8 +2991,10 @@ ha-card { overflow: hidden; }
         { name: "last_strike", selector: entitySel(["event", "sensor", "input_datetime"]) },
         { name: "battery", selector: entitySel(["sensor", "binary_sensor"]) },
         { name: "bait", selector: entitySel(["sensor", "binary_sensor", "input_number", "number", "input_select", "select"]) },
+        { name: "co2", selector: entitySel(["sensor", "binary_sensor", "counter", "input_number", "number"]) },
         { name: "online", selector: entitySel(["binary_sensor", "sensor", "device_tracker"]) },
         { name: "last_seen", selector: entitySel(["sensor", "input_datetime"]) },
+        { name: "signal", selector: entitySel(["sensor"]) },
       ],
     },
     {
@@ -2899,13 +3011,13 @@ ha-card { overflow: hidden; }
       type: "expandable",
       title: "Thresholds",
       schema: [
-        { name: "", type: "grid", schema: [{ name: "battery_low", selector: pct }, { name: "bait_low", selector: pct }] },
+        { name: "", type: "grid", schema: LOW_KEYS.map((name) => ({ name, selector: pct })) },
         { name: "", type: "grid", schema: [{ name: "stale_after", selector: duration }, { name: "offline_after", selector: duration }] },
       ],
     },
   ];
 
-  const TRAP_FORM_KEYS = ["device", "name", "location", "style", ...ROLE_KEYS, "battery_low", "bait_low", "stale_after", "offline_after"];
+  const TRAP_FORM_KEYS = ["device", "name", "location", "style", ...ROLE_KEYS, ...LOW_KEYS, "stale_after", "offline_after"];
 
   /** The duration selector wants { days, hours, minutes, seconds }; YAML may say "12h" or 12. */
   function durationObject(v) {
@@ -3065,7 +3177,8 @@ ha-card { overflow: hidden; }
 
     _generalData() {
       const { traps, type, ...rest } = this._config;
-      const { battery_low, bait_low, ...shown } = CARD_DEFAULTS;
+      const shown = { ...CARD_DEFAULTS };
+      for (const k of LOW_KEYS) delete shown[k];
       const data = { ...shown, ...rest };
       for (const k of DURATION_KEYS) data[k] = durationObject(data[k]);
       // The dropdowns only know the lower-case values the card also accepts as "Goodnature" or "Status". The card's
@@ -3110,7 +3223,7 @@ ha-card { overflow: hidden; }
         if (id && !holds[key]) return `From device: ${id} (asks to confirm)`;
       }
       if (name.startsWith("hold_")) return "Asks for confirmation before running.";
-      if (name === "battery_low" || name === "bait_low") {
+      if (LOW_KEYS.includes(name)) {
         const card = toNum(this._config[name], CARD_DEFAULTS[name]);
         return `Blank = card setting (${card}%)`;
       }
@@ -3195,9 +3308,9 @@ ha-card { overflow: hidden; }
       ev.stopPropagation();
       const value = ev.detail.value || {};
       const next = { ...this._config };
-      for (const key of ["title", "show_summary", "show_scene", "animations", "sort", "columns", "style", "battery_low", "bait_low", "stale_after", "offline_after"]) {
+      for (const key of ["title", "show_summary", "show_scene", "animations", "sort", "columns", "style", ...LOW_KEYS, "stale_after", "offline_after"]) {
         const v = value[key];
-        const isDefault = v === CARD_DEFAULTS[key] && key !== "battery_low" && key !== "bait_low";
+        const isDefault = v === CARD_DEFAULTS[key] && !LOW_KEYS.includes(key);
         if (v === undefined || v === null || v === "" || isDefault || (DURATION_KEYS.includes(key) && !parseDuration(v))) delete next[key];
         else next[key] = DURATION_KEYS.includes(key) ? keepDuration(this._config[key], v) : v;
       }
@@ -3300,7 +3413,7 @@ ha-card { overflow: hidden; }
     window.customCards.push({
       type: CARD_TAG,
       name: "Rodent Trap Card",
-      description: "Status of smart rodent traps: catches, strikes, battery, bait, connectivity and re-arming.",
+      description: "Status of smart rodent traps: catches, strikes, battery, bait, CO\u2082, connectivity and re-arming.",
       preview: true,
       documentationURL: "https://github.com/kedube/ha-rodent-traps",
       getEntitySuggestion: entitySuggestion,

@@ -42,7 +42,7 @@ function helpers() {
         if (!a) return null;
         if (a.dataset.confirm) return `confirm:${a.dataset.confirm}`;
         if (a.dataset.act) return `act:${a.dataset.act}`;
-        const m = /(?:^|\s)m-([a-z_]+)/.exec(a.className);
+        const m = /(?:^|\s)m-([a-z0-9_]+)/.exec(a.className);
         if (m && a.classList.contains("metric")) return `reading:${m[1]}`;
         return a.className.split(" ")[0];
       };
@@ -285,7 +285,7 @@ export default async function run(browser) {
       const c = T.live({ ...card, traps: [trap] }, states);
       const out = {};
       for (const m of c.qa(".metric")) {
-        const k = /(?:^|\s)m-([a-z_]+)/.exec(m.className)[1];
+        const k = /(?:^|\s)m-([a-z0-9_]+)/.exec(m.className)[1];
         out[k] = { label: m.querySelector(".m-label").textContent, name: m.getAttribute("aria-label"), title: m.getAttribute("title") };
       }
       out.chip = c.q(".tile-head .chip").textContent.trim();
@@ -309,7 +309,7 @@ export default async function run(browser) {
     ["Catch detected", "Battery low", "Battery low: 8%", "Bait low: 10%"]);
   check("labels: no bait says Out of bait", readings.out.bait, { label: "Out of bait", name: "Out of bait: 0%", title: "Out of bait: 0%\nsensor.bait" });
   check("labels: not repeated when the value already says it", [readings.words.battery.name, readings.words.bait.name], ["Battery: Low", "Bait: Empty"]);
-  check("labels: a late check-in says so", [readings.late.chip, readings.late.link.label, readings.late.link.name], ["Catch detected", "Last seen, late", "Last seen, late: 13 h ago"]);
+  check("labels: a late check-in says so", [readings.late.chip, readings.late.last_seen.label, readings.late.last_seen.name], ["Catch detected", "Last seen, late", "Last seen, late: 13 h ago"]);
   check("labels: a dash is read as words", [readings.dash.battery.name, readings.dash.bait.name], ["Battery: unknown", "Bait: not found"]);
 
   const holdAttrs = await labels.evaluate(() => {
@@ -332,7 +332,7 @@ export default async function run(browser) {
     const realNow = Date.now;
     const c = T.live({ traps: [{ kill: "binary_sensor.k", last_seen: "sensor.seen", holds: { link: "button.ping" } }] },
       { "binary_sensor.k": st("off"), "sensor.seen": st(iso(), { device_class: "timestamp" }), "button.ping": st("unknown", { friendly_name: "Ping" }) });
-    const link = c.q(".m-link");
+    const link = c.q(".m-last_seen");
     const at = () => ({ text: link.querySelector(".m-value").textContent, name: link.getAttribute("aria-label"), title: link.getAttribute("title"), fit: /fit-(xs|s)\b/.test(link.className) });
     const before = at();
     const seen = [];
@@ -349,7 +349,7 @@ export default async function run(browser) {
       Date.now = realNow;
     }
     obs.disconnect();
-    const out = { before, quiet, later, same: c.q(".m-link") === link, holdKept: link.dataset.hold };
+    const out = { before, quiet, later, same: c.q(".m-last_seen") === link, holdKept: link.dataset.hold };
     c.remove();
     return out;
   });
@@ -357,7 +357,23 @@ export default async function run(browser) {
   check("times: text, name, tooltip and size move on together", [times.before, times.later],
     [{ text: "just now", name: "Last seen: just now", title: "Last seen: just now · Hold: Ping\nsensor.seen", fit: true },
      { text: "3 h ago", name: "Last seen: 3 h ago", title: "Last seen: 3 h ago · Hold: Ping\nsensor.seen", fit: false }]);
-  check("times: updated in place", [times.same, times.holdKept], [true, "link"]);
+  check("times: updated in place, with the old Link hold on Last seen", [times.same, times.holdKept], [true, "last_seen"]);
+
+  // A reading named with a digit (co2) keeps focus when the readings around it are redrawn.
+  const co2Focus = await labels.evaluate(() => {
+    const { st } = T;
+    const ent = (id) => ({ entity_id: id, device_id: "d" });
+    const c = T.live({ traps: [{ device: "d" }] },
+      { "binary_sensor.d_kill_alert": st("off"), "sensor.d_co2_shots_remaining": st(20, { unit_of_measurement: "shots" }), "sensor.d_rssi": st(-60, { unit_of_measurement: "dBm" }) },
+      { devices: { d: { id: "d", name: "D" } }, entities: { "binary_sensor.d_kill_alert": ent("binary_sensor.d_kill_alert"), "sensor.d_co2_shots_remaining": ent("sensor.d_co2_shots_remaining") } });
+    c.q(".m-co2").focus();
+    const before = c.focused();
+    c.extra({ entities: { ...c.hass.entities, "sensor.d_rssi": ent("sensor.d_rssi") } });
+    const out = { before, after: c.focused(), readings: c.qa(".metric").length };
+    c.remove();
+    return out;
+  });
+  check("focus: stays on CO2 when a reading is added beside it", co2Focus, { before: "reading:co2", after: "reading:co2", readings: 3 });
   errors.push(...labels.errors);
   await labels.close();
 

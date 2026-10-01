@@ -81,7 +81,7 @@ export default async function run(browser) {
     c.push("sensor.t_seen", iso());
     out.checkIn = {
       scene: c.q("svg.scene") === scene, battery: c.q(".m-battery") === battery,
-      mouseKeepsGoing: anim(c.q(".mouse"), "peek") === peek && peek.currentTime >= 200, link: c.q(".m-link .m-value").textContent,
+      mouseKeepsGoing: anim(c.q(".mouse"), "peek") === peek && peek.currentTime >= 200, lastSeen: c.q(".m-last_seen .m-value").textContent,
     };
 
     c.push("binary_sensor.t_kill", "on");
@@ -114,7 +114,7 @@ export default async function run(browser) {
     c.remove();
     return out;
   });
-  check("repaint: a check-in keeps the scene, its mouse and the other readings", zwave.checkIn, { scene: true, battery: true, mouseKeepsGoing: true, link: "just now" });
+  check("repaint: a check-in keeps the scene, its mouse and the other readings", zwave.checkIn, { scene: true, battery: true, mouseKeepsGoing: true, lastSeen: "just now" });
   check("repaint: Z-Wave pushes 300 ms apart don't cut SNAP!, +1 or the bump short", zwave.midway,
     { scene: true, snap: true, word: true, popNotRestarted: true, strikes: true, plus: true, plusText: "+1", lastStrikeBumps: true });
   check("repaint: the effects finish and clean up", zwave.after, { count: "8", snap: false, word: false, plus: false, bumps: 0, scene: true });

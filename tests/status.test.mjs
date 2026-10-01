@@ -108,7 +108,7 @@ export default async function run(browser) {
     const dt = { has_date: true, has_time: true, timestamp: twoHoursAgo / 1000 };
     run("input_datetime uses its timestamp, not the browser's time zone", { last_seen: "input_datetime.seen", kill: "binary_sensor.k" },
       { "input_datetime.seen": st(berlin(twoHoursAgo), dt, ago(600)), "binary_sensor.k": st("off") },
-      { link: "2 h ago", chip: "Armed", link_since: new Date(twoHoursAgo).toISOString() },
+      { last_seen: "2 h ago", chip: "Armed", last_seen_since: new Date(twoHoursAgo).toISOString() },
       { card: { offline_after: "6h" } });
     run("input_datetime far away in server time is still offline by the real age", { last_seen: "input_datetime.seen", kill: "binary_sensor.k" },
       { "input_datetime.seen": st(berlin(Date.now() - 10 * 3600000), { has_date: true, has_time: true, timestamp: (Date.now() - 10 * 3600000) / 1000 }), "binary_sensor.k": st("off") },
@@ -124,14 +124,14 @@ export default async function run(browser) {
     }
     const epochIso = new Date(1790000000000).toISOString();
     for (const [unit, v] of [["seconds", "1790000000"], ["milliseconds", "1790000000000"], ["microseconds", "1790000000000000"], ["nanoseconds", "1790000000000000000"]]) {
-      run(`epoch in ${unit}`, { last_seen: "sensor.ls" }, { "sensor.ls": st(v, {}, ago(5)) }, { link_since: epochIso });
+      run(`epoch in ${unit}`, { last_seen: "sensor.ls" }, { "sensor.ls": st(v, {}, ago(5)) }, { last_seen_since: epochIso });
     }
     run("an epoch attribute too large for a date falls back instead of throwing", { last_seen: { entity: "sensor.ls", attribute: "ts" }, kill: "binary_sensor.k" },
-      { "sensor.ls": st("ok", { ts: 1e25 }, ago(300), ago(30)), "binary_sensor.k": st("off") }, { link: "30 min ago", chip: "Armed" });
-    run("last_seen falls back to last_updated", { last_seen: "sensor.ls" }, { "sensor.ls": st("ok", {}, ago(300), ago(60)) }, { link: "1 h ago" });
+      { "sensor.ls": st("ok", { ts: 1e25 }, ago(300), ago(30)), "binary_sensor.k": st("off") }, { last_seen: "30 min ago", chip: "Armed" });
+    run("last_seen falls back to last_updated", { last_seen: "sensor.ls" }, { "sensor.ls": st("ok", {}, ago(300), ago(60)) }, { last_seen: "1 h ago" });
     run("last_strike falls back to last_changed", { last_strike: "sensor.s" }, { "sensor.s": st("3", {}, ago(300), ago(60)) }, { last_strike: "5 h ago" });
     for (const [mins, want] of [[0.5, "just now"], [0.9, "1 min ago"], [59.7, "1 h ago"], [89, "1 h ago"], [60 * 23.8, "1 d ago"], [60 * 36, "2 d ago"]]) {
-      run(`relative time ${mins} min = "${want}"`, { last_seen: "sensor.ls" }, { "sensor.ls": st(ago(mins), { device_class: "timestamp" }) }, { link: want });
+      run(`relative time ${mins} min = "${want}"`, { last_seen: "sensor.ls" }, { "sensor.ls": st(ago(mins), { device_class: "timestamp" }) }, { last_seen: want });
     }
 
     // --- Item 35: level readings.

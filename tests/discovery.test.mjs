@@ -35,7 +35,7 @@ export default async function run(browser) {
       await new Promise((r) => setTimeout(r, 20));
       const form = ed.shadowRoot.querySelectorAll("ha-form")[1];
       const res = {};
-      for (const k of ["kill", "armed", "rearm", "strikes", "last_strike", "battery", "bait", "online", "last_seen", "hold_kill", "hold_bait", "hold_link"]) {
+      for (const k of ["kill", "armed", "rearm", "strikes", "last_strike", "battery", "bait", "co2", "online", "last_seen", "signal", "hold_kill", "hold_bait", "hold_co2", "hold_link", "hold_last_seen"]) {
         const h = form.computeHelper({ name: k }) || "";
         const m = h.match(/^From device: (\S+)/);
         if (m) res[k] = m[1];
@@ -102,6 +102,81 @@ export default async function run(browser) {
     ]);
     check("percentage battery picked over a voltage one", await supplied(h, "d1"), { battery: "sensor.t1_battery_level" });
 
+    // --- CO2 shots, signal strength and last seen, as the ESPHome Goodnature gateway names them on an A24 trap.
+    const a24 = "goodnature_a24_smart_trap_1";
+    const gw = (list) => list.map(([eid, state, attrs]) => [eid.replace("$", a24), state, { friendly_name: `Goodnature A24 Smart Trap 1 ${attrs.fn}`, ...attrs, fn: undefined }]);
+    h = registry().device("a24", { name: "Goodnature A24 Smart Trap 1", manufacturer: "Goodnature", model: "Goodnature A24 Smart Trap" }, gw([
+      ["sensor.$_strikes", 2, { fn: "Strikes", state_class: "total_increasing" }],
+      ["binary_sensor.$_kill_alert", "off", { fn: "Kill Alert", device_class: "occupancy" }],
+      ["event.$_strike", ago(11), { fn: "Strike", event_type: "strike" }],
+      ["sensor.$_last_strike", ago(11), { fn: "Last Strike", device_class: "timestamp" }],
+      ["sensor.$_battery", 86, { fn: "Battery", unit_of_measurement: "%", device_class: "battery" }],
+      ["binary_sensor.$_battery_low", "off", { fn: "Battery Low", device_class: "battery" }],
+      ["sensor.$_battery_status", "Normal", { fn: "Battery Status" }],
+      ["sensor.$_lure_age", 0, { fn: "Lure Age", unit_of_measurement: "d", device_class: "duration" }],
+      ["sensor.$_lure_remaining", 180, { fn: "Lure Remaining", unit_of_measurement: "d", device_class: "duration" }],
+      ["number.$_lure_life", 180, { fn: "Lure Life", unit_of_measurement: "d", min: 1, max: 730 }],
+      ["binary_sensor.$_lure_due", "off", { fn: "Lure Due", device_class: "problem" }],
+      ["sensor.$_co2_shots_remaining", 22, { fn: "CO2 Shots Remaining", unit_of_measurement: "shots" }],
+      ["binary_sensor.$_co2_low", "off", { fn: "CO2 Low", device_class: "problem" }],
+      ["binary_sensor.$_online", "on", { fn: "Online", device_class: "connectivity" }],
+      ["sensor.$_signal_strength", -71, { fn: "Signal Strength", unit_of_measurement: "dBm", device_class: "signal_strength" }],
+      ["sensor.$_last_seen", ago(5), { fn: "Last Seen", device_class: "timestamp" }],
+      ["sensor.$_status", "Waiting for trap", { fn: "Status" }],
+      ["button.$_poll_now", "unknown", { fn: "Poll Now" }],
+      ["button.$_lure_replaced", "unknown", { fn: "Lure Replaced" }],
+      ["button.$_co2_shot_used", "unknown", { fn: "CO2 Shot Used" }],
+      ["button.$_co2_canister_replaced", "unknown", { fn: "CO2 Canister Replaced" }],
+      ["button.$_clear_kill_alert", "unknown", { fn: "Clear Kill Alert" }],
+      ["button.$_test_fire", "unknown", { fn: "Test Fire" }],
+    ]));
+    check("gateway A24: every reading found", await supplied(h, "a24"), {
+      kill: `binary_sensor.${a24}_kill_alert`, strikes: `sensor.${a24}_strikes`, last_strike: `event.${a24}_strike`, battery: `sensor.${a24}_battery`,
+      bait: `sensor.${a24}_lure_remaining`, co2: `sensor.${a24}_co2_shots_remaining`, online: `binary_sensor.${a24}_online`, last_seen: `sensor.${a24}_last_seen`,
+      signal: `sensor.${a24}_signal_strength`, hold_kill: `button.${a24}_clear_kill_alert`, hold_bait: `button.${a24}_lure_replaced`, hold_co2: `button.${a24}_co2_canister_replaced`,
+    });
+    {
+      const c = document.createElement("rodent-trap-card");
+      document.body.appendChild(c);
+      c.setConfig({ traps: [{ device: "a24" }] });
+      c.hass = h;
+      const sh = c.shadowRoot;
+      const value = (k) => sh.querySelector(`.m-${k} .m-value`).textContent.trim();
+      check("gateway A24: its tile", {
+        readings: [...sh.querySelectorAll(".metric")].map((m) => /m-([a-z0-9_]+)/.exec(m.className)[1]),
+        values: ["co2", "link", "last_seen", "signal"].map(value), co2Hold: sh.querySelector(".m-co2").dataset.hold, chip: sh.querySelector(".tile-head .chip").textContent.trim(),
+      }, {
+        readings: ["strikes", "last_strike", "battery", "bait", "co2", "kill", "link", "last_seen", "signal"],
+        values: ["22 shots", "Online", "5 min ago", "-71 dBm"], co2Hold: "co2", chip: "Armed",
+      });
+      h.states[`binary_sensor.${a24}_co2_low`] = st("on", { device_class: "problem" });
+      c.hass = { ...h, states: { ...h.states } };
+      check("gateway A24: its CO2 Low alert marks the reading low", [sh.querySelector(".tile-head .chip").textContent.trim(), value("co2")], ["Low CO₂", "22 shots"]);
+      c.remove();
+    }
+    h = registry().device("d1", {}, [["sensor.t1_co2", 812, { unit_of_measurement: "ppm", device_class: "carbon_dioxide" }]]);
+    check("a CO2 concentration sensor is not the canister", await supplied(h, "d1"), {});
+    h = registry().device("d1", {}, [["sensor.t1_strikes_remaining", 9], ["sensor.t1_strikes", 3]]);
+    check("strikes remaining are CO2 shots, not the strike count", await supplied(h, "d1"), { strikes: "sensor.t1_strikes", co2: "sensor.t1_strikes_remaining" });
+    h = registry().device("d1", {}, [["sensor.t1_co2_remaining", 20], ["number.t1_co2_capacity", 30], ["button.t1_replace_canister", "unknown"]]);
+    check("CO2 remaining, capacity and replace canister", await supplied(h, "d1"), { co2: "sensor.t1_co2_remaining", hold_co2: "button.t1_replace_canister" });
+    {
+      const c = document.createElement("rodent-trap-card");
+      document.body.appendChild(c);
+      c.setConfig({ traps: [{ device: "d1" }] });
+      c.hass = h;
+      check("a CO2 capacity entity sets the canister size", c.shadowRoot.querySelector(".m-co2 .m-value").textContent.trim(), "20/30");
+      c.remove();
+    }
+    h = registry().device("d1", {}, [["sensor.t1_lqi", 200], ["sensor.t1_rssi", -60, { unit_of_measurement: "dBm", device_class: "signal_strength" }]]);
+    check("ZHA: RSSI is picked over LQI", await supplied(h, "d1"), { signal: "sensor.t1_rssi" });
+    for (const id of ["sensor.t1_linkquality", "sensor.t1_wifi_signal", "sensor.t1_signal_level"]) {
+      h = registry().device("d1", {}, [[id, 50]]);
+      check(`signal: ${id}`, (await supplied(h, "d1")).signal, id);
+    }
+    h = registry().device("d1", {}, [["sensor.t1_signal_lost_count", 2]]);
+    check("signal must end the name", (await supplied(h, "d1")).signal, undefined);
+
     // --- Item 4: no made-up trap in the starter config.
     const Card = customElements.get("rodent-trap-card");
     const lights = { states: { "light.kitchen": st("on"), "sensor.outdoor_temperature": st(12) }, entities: {}, devices: { l1: { id: "l1", name: "Kitchen light" } }, areas: {} };
@@ -138,6 +213,13 @@ export default async function run(browser) {
     ])).traps, [
       { name: "Garage Trap", kill: "sensor.garage_trap_status", online: "sensor.garage_trap_node_status" },
       { name: "Mousetrap Kitchen", battery: "sensor.mousetrap_kitchen_battery_level" },
+    ]);
+    check("entity ids: CO2 shots and signal strength", Card.getStubConfig(ids([
+      ["binary_sensor.garden_trap_kill", "off"], ["sensor.garden_trap_co2_shots_remaining", 20], ["sensor.garden_trap_rssi", -70],
+      ["sensor.shed_trap_linkquality", 120],
+    ])).traps, [
+      { name: "Garden Trap", kill: "binary_sensor.garden_trap_kill", co2: "sensor.garden_trap_co2_shots_remaining", signal: "sensor.garden_trap_rssi" },
+      { name: "Shed Trap", signal: "sensor.shed_trap_linkquality" },
     ]);
     {
       const list = [];
