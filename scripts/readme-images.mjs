@@ -56,18 +56,50 @@ async function still(theme, width, scale, path, sort = "config") {
   console.log("wrote", path);
 }
 
-/** The first tile (Garage) at phone width: frames at GIF.fps of animation time, then ffmpeg. */
-async function gif(path) {
-  const frames = mkdtempSync(join(tmpdir(), "rodent-trap-frames-"));
+/** The demo at phone width with Garage alone and no header, whose summary chips could wrap differently after the catch. */
+async function garagePage() {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1.5, colorScheme: "light" });
   await page.goto(demoUrl);
   await page.selectOption("#width", "400");
+  // `config` and `reconfigure` are the demo's own.
+  await page.evaluate(() => reconfigure({ traps: [config.traps[0]], title: "", show_summary: false }));
   await page.waitForTimeout(400);
+  return page;
+}
+
+function catchGarage(page) {
+  return page.locator(".trap-ctl", { hasText: "Garage" }).getByRole("button", { name: "Catch!", exact: true }).click();
+}
+
+function cardSize(page) {
+  return page.evaluate(() => {
+    const card = document.querySelector("rodent-trap-card");
+    return { card: card.getBoundingClientRect().height, tile: card.shadowRoot.querySelector(".tile").getBoundingClientRect().height };
+  });
+}
+
+/**
+ * The Garage tile at phone width: frames at GIF.fps of animation time, then ffmpeg. The catch's banner makes the tile
+ * taller, so every frame is cropped to the caught tile's height, measured first on a page of its own. Until the catch,
+ * the card is held at its caught height, and the tile grows into the card's own background.
+ */
+async function gif(path) {
+  const probe = await garagePage();
+  await catchGarage(probe);
+  await probe.waitForTimeout(400);
+  const caught = await cardSize(probe);
+  await probe.close();
+
+  const frames = mkdtempSync(join(tmpdir(), "rodent-trap-frames-"));
+  const page = await garagePage();
+  await page.evaluate((h) => {
+    document.querySelector("rodent-trap-card").shadowRoot.querySelector("ha-card").style.minHeight = `${h}px`;
+  }, caught.card);
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Animation.enable");
   await cdp.send("Animation.setPlaybackRate", { playbackRate: GIF.rate });
   const box = await page.locator("rodent-trap-card .tile").first().boundingBox();
-  const clip = { x: box.x - 2, y: box.y - 2, width: box.width + 4, height: box.height + 4 };
+  const clip = { x: box.x - 2, y: box.y - 2, width: box.width + 4, height: Math.max(box.height, caught.tile) + 4 };
   const step = 1000 / GIF.fps / GIF.rate; // real milliseconds per frame
   const t0 = Date.now();
   let clicked = false;
@@ -78,7 +110,7 @@ async function gif(path) {
     const seconds = ((Date.now() - t0) * GIF.rate) / 1000; // animation time
     if (!clicked && seconds >= GIF.catchAt) {
       clicked = true;
-      await page.locator(".trap-ctl", { hasText: "Garage" }).getByRole("button", { name: "Catch!", exact: true }).click();
+      await catchGarage(page);
     }
     if (seconds > GIF.end) break;
     await page.screenshot({ path: join(frames, `f${String(i).padStart(4, "0")}.png`), clip });
