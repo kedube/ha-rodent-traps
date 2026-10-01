@@ -1,6 +1,6 @@
 # Rodent Trap Card
 
-A Home Assistant dashboard card that shows the state of your smart rodent traps at a glance: catches, strikes, battery, bait, CO₂ shots left, connectivity, signal strength, when each trap was last seen and whether it needs re-arming. Each trap gets an animated illustration. There are three kinds: a snap trap, a Goodnature-style CO₂ trap and a bait station. You can run a trap's buttons (clear kill alert, lure replaced, CO₂ canister replaced, ping) straight from the tile.
+A Home Assistant dashboard card that shows the state of your smart rodent traps at a glance: catches, strikes, battery, bait, CO₂ shots left, connectivity, signal strength, when each trap was last seen and whether it needs re-arming. Each trap gets an animated illustration. There are five kinds: a snap trap, a Goodnature A24, a Goodnature Mouse Trap, a NEO Coolcam electric trap and a bait station. You can run a trap's buttons (clear kill alert, lure replaced, CO₂ canister replaced, ping) straight from the tile.
 
 [![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=kedube&repository=ha-rodent-traps&category=plugin)
 
@@ -8,7 +8,7 @@ A Home Assistant dashboard card that shows the state of your smart rodent traps 
   <img src="https://raw.githubusercontent.com/kedube/ha-rodent-traps/main/images/snap.gif" alt="A trap tile: a mouse sniffs the cheese, then the bar snaps shut and the tile turns red with a catch alert" width="420">
 </p>
 
-![The card in a dark theme with six traps, most urgent first: a snap trap with a catch, a bait station that needs re-arming, an offline trap, a Goodnature trap whose sensors disagree, and two armed traps](images/card-dark.png)
+![The card in a dark theme with eight traps, most urgent first: a snap trap with a catch, a bait station that needs re-arming, an offline snap trap, a Goodnature A24 whose sensors disagree, and four armed traps: a snap trap, a Goodnature A24 in its stand, a Goodnature Mouse Trap and a NEO Coolcam electric trap](images/card-dark.png)
 
 ## Features
 
@@ -19,11 +19,16 @@ A Home Assistant dashboard card that shows the state of your smart rodent traps 
 - **Buttons on the tile.** Hold a reading to run its action (hold Catch to clear the kill alert, Bait for lure replaced, CO₂ for a new canister, Link to ping), with a confirmation first. You can also add a row of buttons to any trap.
 - **Animated illustration** per trap type and state:
   - **Armed:** a mouse sniffs around the trap and darts off twice, then sits still. It plays again when the trap is set again.
-  - **Catch:** the trap goes off live with "SNAP!", "POP!" or "ZAP!", and the tile turns red with a pulsing ring. It plays once, when the catch is reported, even when the device reports the catch, the count and the time as separate updates. It doesn't play again when you come back to the dashboard, or when an integration reloads and brings back a catch it already had.
+  - **Catch:** the trap goes off live, the way the real one does, and the tile turns red with a pulsing ring. It plays once, when the catch is reported, even when the device reports the catch, the count and the time as separate updates. It doesn't play again when you come back to the dashboard, or when an integration reloads and brings back a catch it already had.
+    - **Snap trap:** the bar snaps shut on the mouse: "SNAP!"
+    - **Goodnature A24:** the trap kicks as its CO₂ piston fires, a puff of gas escapes, and the mouse drops into the stand, where it shows through the slots: "POP!" The Smart Cap's signal turns red.
+    - **Goodnature Mouse Trap:** the infrared beam across the entrance trips, the striker drops and goes back up, and the mouse is left inside with its tail showing: "WHAM!"
+    - **NEO Coolcam:** sparks crackle around the entrance, the vents flash, a wisp of smoke rises, and the red light flashes and beeps until you clear the catch: "ZAP!"
+    - **Bait station:** the bait window flashes: "ZAP!"
   - **Sprung:** a spinning re-arm badge appears.
   - **Offline:** the trap is greyed out.
-  - **Bait:** the drawn bait (cheese, lure window or bait blocks) runs down with the bait level.
-  - **CO₂:** the Goodnature trap's canister is outlined in red when it's out of CO₂.
+  - **Bait:** the drawn bait (cheese, the A24's lure window, the Mouse Trap's lure donut, the NEO Coolcam's bait or the bait blocks) runs down with the bait level.
+  - **CO₂:** the A24's CO₂ cartridge is outlined in red when it's out of CO₂.
 - **Readable values.** Durations are rounded to whole units (178.9 days shows as **179 d**, or **26 wk** if you prefer). Long values shrink or wrap instead of being cut off, and each reading's tooltip shows the full value, its hold action and the entity ID.
 - **Summary chips** in the header show catches, traps to re-arm, offline traps, traps that need attention and total strikes.
 - **Visual editor** with a device picker. Every field shows what the device supplies if you leave it blank.
@@ -93,7 +98,7 @@ The visual editor fills in device IDs for you. To find one yourself, open the de
 | `type` | string | **required** | `custom:rodent-trap-card` |
 | `traps` | list | **required** unless you use the single-trap form | The traps to show. See [Trap options](#trap-options). |
 | `title` | string | none | Card heading. Leave it out for no title. |
-| `style` | `snap` \| `goodnature` \| `station` | `snap` | Illustration for traps that don't set their own and whose device isn't detected (see the trap's `style`). `auto` is the same as leaving it out. |
+| `style` | `snap` \| `goodnature` \| `goodnature_mouse` \| `neocam` \| `station` | `snap` | Illustration for traps that don't set their own and whose device isn't detected (see the trap's `style`). `auto` is the same as leaving it out. |
 | `sort` | `config` \| `status` \| `name` | `config` | `status` puts the most urgent traps first: catches, re-arms, offline, check trap, warnings, status unknown, then OK. |
 | `stale_after` | duration | none | Flag a trap as **Not seen recently** when its `last_seen` is older than this. |
 | `offline_after` | duration | none | Treat a trap as **Offline** when its `last_seen` is older than this. |
@@ -125,7 +130,7 @@ The card checks option values when it loads. A duration it can't read, a misspel
 | `device` | device ID | Fills in every reading, alert and hold action this page lists that you don't set yourself. See [Device auto-setup](#device-auto-setup). |
 | `name` | string | Trap name. Defaults to the device name, then `Trap 1`, `Trap 2` and so on. |
 | `location` | string | Shown under the name. Defaults to the area of the device (or of the first entity). A device without an area of its own, such as a trap that Home Assistant lists under its hub, uses its parent device's area. Set to `false` to hide it. |
-| `style` | `snap` \| `goodnature` \| `station` \| `auto` | Illustration. Without it, a device whose manufacturer or model mentions Goodnature gets `goodnature`, and one that mentions a station gets `station`; any other trap uses the card's `style`. A trap's own style beats the detection, and the detection beats the card's `style`. |
+| `style` | `snap` \| `goodnature` \| `goodnature_mouse` \| `neocam` \| `station` \| `auto` | Illustration: a snap trap, a Goodnature A24 (`goodnature`), a Goodnature Mouse Trap (`goodnature_mouse`), a NEO Coolcam electric trap (`neocam`) or a bait station. Without it, the card goes by the device. See [Which illustration a device gets](#which-illustration-a-device-gets). A trap's own style beats the detection, and the detection beats the card's `style`. |
 | `kill` | entity | Catch or kill alert. |
 | `armed` | entity | On means the trap is armed. |
 | `rearm` | entity | On means the trap has been sprung and needs re-arming. Use `armed`, `rearm`, or both; with both, a disagreement shows **Check trap**. |
@@ -143,6 +148,17 @@ The card checks option values when it loads. A duration it can't read, a misspel
 | `stale_after`, `offline_after` | duration | Override the card's thresholds for this trap. |
 
 Any entity option can be set to `false` to hide something the device would otherwise supply, for example `strikes: false`.
+
+#### Which illustration a device gets
+
+With `device:` and no `style`, the card picks the illustration from the device's manufacturer and model, and from the name its integration gave it. A name you gave the device yourself doesn't count.
+
+- **`goodnature`** (the A24): the manufacturer or model mentions Goodnature, and it isn't a Mouse Trap.
+- **`goodnature_mouse`**: a Goodnature device whose model or name says Mouse Trap, such as the **Goodnature Mouse Trap 1** the [Goodnature gateway](https://github.com/kedube/ha-goodnature-gateway) adds. A device that says A24, or that has a CO₂ reading, is an A24.
+- **`neocam`**: the model or name says NAS-MA01, or says NEO Coolcam and mouse or trap. A NEO Coolcam trap usually shows up under Tuya or Tasmota, so its name counts. NEO Coolcam door sensors don't count, so a snap trap with one stuck to it keeps the snap trap.
+- **`station`**: the manufacturer or model mentions a station.
+
+Any other trap uses the card's `style`. If a trap shows the wrong one, set its `style`.
 
 **Single-trap form.** For a single trap, you can put the trap options directly on the card and skip `traps:`. The visual editor moves them under `traps:` the first time you change something there. Card options such as the thresholds stay on the card, and `style` is copied to the trap so it still beats device detection.
 
@@ -263,11 +279,13 @@ Midnight:
 
 | Variable | Colours | Default |
 | --- | --- | --- |
-| `rodent-trap-wood-color`, `rodent-trap-wood-edge-color`, `rodent-trap-wood-grain-color` | the snap trap's base and the Goodnature trap's post | `#d6a064`, `#a8703a`, `rgba(110, 62, 18, 0.28)` |
-| `rodent-trap-metal-color`, `rodent-trap-metal-highlight-color` | bars, springs, brackets and the CO₂ canister | `#8c96a1`, `#c9d0d7` |
-| `rodent-trap-cheese-color`, `rodent-trap-cheese-shade-color` | the cheese in the drawing and the bait icon, and the stars and "SNAP!" burst of a catch | `#f7c948`, `#dea41f` |
+| `rodent-trap-wood-color`, `rodent-trap-wood-edge-color`, `rodent-trap-wood-grain-color` | the snap trap's base | `#d6a064`, `#a8703a`, `rgba(110, 62, 18, 0.28)` |
+| `rodent-trap-metal-color`, `rodent-trap-metal-highlight-color` | bars, springs, the CO₂ cartridge and its puff, the Mouse Trap's striker and the NEO Coolcam's plate | `#8c96a1`, `#c9d0d7` |
+| `rodent-trap-cheese-color`, `rodent-trap-cheese-shade-color` | the cheese in the drawing and the bait icon, the NEO Coolcam's bait and warning sticker, and the stars and "SNAP!" burst of a catch | `#f7c948`, `#dea41f` |
 | `rodent-trap-mouse-fur-color`, `rodent-trap-mouse-belly-color`, `rodent-trap-mouse-skin-color`, `rodent-trap-mouse-eye-color` | the mouse, including the one by the title (skin is its ears, nose, tail and feet) | `#a4abb4`, `#d3d8de`, `#f1a2b0`, `#26282b` |
-| `rodent-trap-goodnature-body-color`, `rodent-trap-goodnature-stripe-color`, `rodent-trap-goodnature-lure-color`, `rodent-trap-goodnature-canister-color` | the Goodnature trap | `#2d3833`, `#86b640`, `#e39b3b`, `#d9463b` |
+| `rodent-trap-goodnature-body-color`, `rodent-trap-goodnature-stripe-color`, `rodent-trap-goodnature-lure-color`, `rodent-trap-goodnature-canister-color` | the A24 and its stand, Goodnature's orange (the A24's head and knob, the Mouse Trap's button), the lure (in the A24's window and the Mouse Trap's donut), and the band on the CO₂ cartridge | `#25282a`, `#ee6b2f`, `#e39b3b`, `#d9463b` |
+| `rodent-trap-goodnature-mouse-body-color`, `rodent-trap-goodnature-mouse-entrance-color` | the Goodnature Mouse Trap | `#eef0ec`, `#18211d` |
+| `rodent-trap-neocam-body-color`, `rodent-trap-neocam-entrance-color`, `rodent-trap-neocam-spark-color` | the NEO Coolcam trap, and the sparks of a catch | `#2b2e33`, `#0e1012`, `#6fd3ff` |
 | `rodent-trap-station-body-color`, `rodent-trap-station-lid-color`, `rodent-trap-station-entrance-color`, `rodent-trap-station-bait-color` | the bait station | `#3f6150`, `#4f7763`, `#16201b`, `#3aa6c8` |
 
 The card title uses your theme's card header font and size (`ha-card-header-font-family`, `ha-card-header-font-size`), like Home Assistant's own cards. With [card-mod](https://github.com/thomasloven/lovelace-card-mod), you can set the same variables, or restyle anything else, on a single card; card-mod's styles override the card's own:
@@ -396,7 +414,7 @@ traps:
 
 ### Goodnature A24 Smart Traps over Bluetooth
 
-The [Goodnature gateway](https://github.com/kedube/ha-goodnature-gateway), an ESP32 running ESPHome, adds each trap as its own device. Pick that device and the card fills in the strikes, battery, lure, CO₂ shots, online state, last seen and signal strength. It also sets up holds that clear the kill alert, mark the lure replaced and mark a new CO₂ canister. If you set the gateway's `co2_capacity` to something other than 24, give the card the same canister size:
+The [Goodnature gateway](https://github.com/kedube/ha-goodnature-gateway), an ESP32 running ESPHome, adds each trap as its own device. Pick that device and the card fills in the strikes, battery, lure, CO₂ shots, online state, last seen and signal strength. A24s get the A24 drawing, and the gateway's Mouse Traps get the Mouse Trap drawing. It also sets up holds that clear the kill alert, mark the lure replaced and mark a new CO₂ canister. If you set the gateway's `co2_capacity` to something other than 24, give the card the same canister size:
 
 ```yaml
 traps:
@@ -484,7 +502,7 @@ The card only displays state and runs actions you ask for. Pair it with an autom
 
 The card is a single dependency-free file, [`dist/rodent-trap-card.js`](dist/rodent-trap-card.js), with no build step. Keep it to ES2018 syntax (no `?.` or `??`) and plain ASCII (write other characters as `\u` escapes), because older wall tablets and kiosk browsers still run Home Assistant. CI checks both.
 
-- **Try it without Home Assistant:** open [`demo/index.html`](demo/index.html) in a browser. It runs the real card against simulated entities, including two Goodnature-style devices set up with `device:` alone. Buttons trigger strikes, drain lure and batteries, and take traps offline; hold actions and the buttons on the tiles call a simulated Home Assistant. Mousetrap 1's **Strike (Z-Wave style)** sends the catch, the count, the event and last seen as four updates 300 ms apart, the way Z-Wave traps report them. Mousetrap 1's **CO₂ −8 shots** and **Weak signal** buttons run down its canister and its signal. The Kitchen trap's **Refill bait** button is written in Home Assistant's `perform-action` format. The toolbar changes the card's width, from a narrow tile (half a section) to full width, and sets `columns`, so you can see the compact layout and `columns` as a maximum.
+- **Try it without Home Assistant:** open [`demo/index.html`](demo/index.html) in a browser. It runs the real card against simulated entities, including two Goodnature A24s and a Goodnature Mouse Trap set up with `device:` alone, and a NEO Coolcam trap. Buttons trigger strikes, drain lure and batteries, and take traps offline; hold actions and the buttons on the tiles call a simulated Home Assistant. Mousetrap 1's **Strike (Z-Wave style)** sends the catch, the count, the event and last seen as four updates 300 ms apart, the way Z-Wave traps report them. Mousetrap 1's **CO₂ −8 shots** and **Weak signal** buttons run down its canister and its signal. The Kitchen trap's **Refill bait** button is written in Home Assistant's `perform-action` format. The toolbar changes the card's width, from a narrow tile (half a section) to full width, and sets `columns`, so you can see the compact layout and `columns` as a maximum.
 - **Tests:** run `npm ci` once, then `npm test`. The tests drive the card, the visual editor and the demo in headless Google Chrome (set `CHROME_PATH` to use another Chrome or Chromium), check the syntax rules above, the README's links and the workflow, and replay the release job against scratch Git repositories. `npm test -- editor` runs only the suites with `editor` in their file name.
 - **README images:** `npm run images` regenerates [`images/card-dark.png`](images/card-dark.png) and [`images/snap.gif`](images/snap.gif) from the demo. The GIF also needs `ffmpeg`, and the exact command is at the top of [`scripts/readme-images.mjs`](scripts/readme-images.mjs). The README loads the GIF from `main` by its full URL because HACS rewrites relative Markdown images but not HTML `<img>` tags.
 - **CI:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the HACS validation action, the syntax checks and the tests on every pull request and every push to `main`, and weekly.

@@ -154,6 +154,38 @@ export default async function run(browser) {
       check("gateway A24: its CO2 Low alert marks the reading low", [sh.querySelector(".tile-head .chip").textContent.trim(), value("co2")], ["Low CO₂", "22 shots"]);
       c.remove();
     }
+    // --- The art a device gets from its maker, model and own name.
+    {
+      const art = (dev, list = [["binary_sensor.t_kill_alert", "off"]]) => {
+        const c = document.createElement("rodent-trap-card");
+        document.body.appendChild(c);
+        c.setConfig({ traps: [{ device: "d" }] });
+        c.hass = registry().device("d", dev, list);
+        const got = /art-(\w+)/.exec(c.shadowRoot.querySelector("svg.scene").getAttribute("class"))[1];
+        c.remove();
+        return got;
+      };
+      const gn = { manufacturer: "Goodnature" };
+      check("art: the gateway's A24 and Mouse Trap", [
+        art({ ...gn, name: "Goodnature A24 Smart Trap 1", model: "Goodnature A24 Smart Trap" }),
+        art({ ...gn, name: "Goodnature Mouse Trap 1", model: "Goodnature Mouse Trap" }),
+        art({ ...gn, name: "Goodnature Mouse Trap 2", model: "" }),
+      ], ["goodnature", "goodnature_mouse", "goodnature_mouse"]);
+      check("art: a Goodnature trap you named Mousetrap stays an A24", art({ ...gn, name: "Goodnature Trap 1", name_by_user: "Mousetrap 1", model: "A24 Chirp" }), "goodnature");
+      check("art: a Goodnature mouse trap with a CO2 canister is an A24",
+        art({ ...gn, name: "Goodnature Rat & Mouse Trap" }, [["binary_sensor.t_kill_alert", "off"], ["sensor.t_co2_shots_remaining", 20]]), "goodnature");
+      check("art: a NEO Coolcam trap, under Tasmota, Tuya or its own name", [
+        art({ manufacturer: "Tasmota", model: "NEO Coolcam Mouse Trap", name: "Tasmota" }),
+        art({ manufacturer: "Tuya", model: "NAS-MA01W", name: "Mousetrap" }),
+        art({ manufacturer: "Tuya", model: "WiFi Mousetrap", name: "Neo Coolcam mouse trap" }),
+      ], ["neocam", "neocam", "neocam"]);
+      check("art: a NEO Coolcam door sensor on a snap trap stays a snap trap",
+        art({ manufacturer: "Shenzhen Neo Electronics Co., Ltd", model: "Door/Window Detector", name: "NEO Coolcam Door Sensor", name_by_user: "Pantry trap" }), "snap");
+      check("art: a trap's own style beats its device",
+        (() => { const c = document.createElement("rodent-trap-card"); document.body.appendChild(c); c.setConfig({ traps: [{ device: "d", style: "snap" }] });
+          c.hass = registry().device("d", { ...gn, name: "Goodnature Mouse Trap 1" }, [["binary_sensor.t_kill_alert", "off"]]);
+          const got = /art-(\w+)/.exec(c.shadowRoot.querySelector("svg.scene").getAttribute("class"))[1]; c.remove(); return got; })(), "snap");
+    }
     h = registry().device("d1", {}, [["sensor.t1_co2", 812, { unit_of_measurement: "ppm", device_class: "carbon_dioxide" }]]);
     check("a CO2 concentration sensor is not the canister", await supplied(h, "d1"), {});
     h = registry().device("d1", {}, [["sensor.t1_strikes_remaining", 9], ["sensor.t1_strikes", 3]]);

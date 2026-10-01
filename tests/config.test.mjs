@@ -71,8 +71,8 @@ export default async function run(browser) {
     check("style is compared in lower case", art({ style: "Goodnature", traps: [{ kill: "binary_sensor.k" }] }), "goodnature");
     check("trap style auto uses the card's", art({ style: "station", traps: [{ kill: "binary_sensor.k", style: "auto" }] }), "station");
     check("trap style in capitals", art({ traps: [{ kill: "binary_sensor.k", style: " Station " }] }), "station");
-    check("misspelt card style is an error", configError({ style: "goodnatur", traps: [{}] }), `style: "goodnatur" isn't a style (use snap, goodnature, station or auto).`);
-    check("misspelt trap style is an error", configError({ traps: [{ style: "stn" }] }), `traps[0].style: "stn" isn't a style (use snap, goodnature, station or auto).`);
+    check("misspelt card style is an error", configError({ style: "goodnatur", traps: [{}] }), `style: "goodnatur" isn't a style (use snap, goodnature, goodnature_mouse, neocam, station or auto).`);
+    check("misspelt trap style is an error", configError({ traps: [{ style: "stn" }] }), `traps[0].style: "stn" isn't a style (use snap, goodnature, goodnature_mouse, neocam, station or auto).`);
     check("misspelt sort is an error", configError({ sort: "urgency", traps: [{}] }), `sort: "urgency" isn't an order (use config, status or name).`);
     {
       const c = mount({ sort: "Status", traps: [{ name: "Fine", kill: "binary_sensor.ok" }, { name: "Caught", kill: "binary_sensor.k" }] },

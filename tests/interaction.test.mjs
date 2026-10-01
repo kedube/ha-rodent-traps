@@ -124,7 +124,7 @@ export default async function run(browser) {
   const chips = await demo.evaluate(() =>
     [...document.querySelector("rodent-trap-card").shadowRoot.querySelectorAll(".tile .tile-head .chip")].map((c) => c.textContent.trim())
   );
-  check("demo renders six traps", chips.length, 6);
+  check("demo renders eight traps", chips.length, 8);
   for (const want of ["Catch detected", "Needs re-arm", "Offline", "Check trap"]) check(`demo shows "${want}"`, chips.includes(want), true);
   // A restart leaves the Garage trap's sensors unknown: grey "Status unknown", not green "Armed", until they report.
   const garage = await demo.evaluate(async () => {

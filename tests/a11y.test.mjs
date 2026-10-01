@@ -564,7 +564,7 @@ export default async function run(browser) {
     };
   });
   check("demo: the tip mentions Shift+Enter and Escape", demoInfo.tip, true);
-  check("demo: every trap name is a heading", demoInfo.headings, ["Garage", "Basement", "Mousetrap 1", "Mousetrap 2", "Kitchen", "Shed"]);
+  check("demo: every trap name is a heading", demoInfo.headings, ["Garage", "Basement", "Mousetrap 1", "Mousetrap 2", "Pantry", "Loft", "Kitchen", "Shed"]);
   errors.push(...demo.errors);
   await demo.close();
 

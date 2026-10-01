@@ -162,6 +162,29 @@
     add(`button.${p}_ping`, "unknown", { label: "Ping" });
   }
 
+  // A Goodnature Mouse Trap, named as the ESPHome Goodnature gateway names it. It has no CO2 and no armed state.
+  function goodnatureMouse(n, name) {
+    const id = `gm${n}`;
+    const p = `goodnature_mouse_trap_${n}`;
+    devices[id] = { id, name: `Goodnature Mouse Trap ${n}`, name_by_user: name, manufacturer: "Goodnature", model: "Goodnature Mouse Trap", area_id: "attic" };
+    const add = (entity_id, state, attrs = {}, ago = 0) => {
+      set(entity_id, state, { friendly_name: `${name} ${attrs.label}`, ...attrs, label: undefined }, ago);
+      entities[entity_id] = { entity_id, device_id: id, platform: "esphome" };
+    };
+    add(`sensor.${p}_strikes`, 3, { label: "Strikes", state_class: "total_increasing" }, 60 * 30);
+    add(`event.${p}_strike`, minutesAgo(60 * 30), { label: "Strike", event_type: "strike" }, 60 * 30);
+    add(`binary_sensor.${p}_kill_alert`, "off", { label: "Kill Alert", device_class: "occupancy" }, 60 * 29);
+    add(`sensor.${p}_battery`, 72, { label: "Battery", unit_of_measurement: "%", device_class: "battery" });
+    add(`sensor.${p}_lure_remaining`, 64, { label: "Lure Remaining", unit_of_measurement: "d", device_class: "duration" });
+    add(`number.${p}_lure_life`, 90, { label: "Lure Life", unit_of_measurement: "d", min: 1, max: 365 });
+    add(`binary_sensor.${p}_online`, "on", { label: "Online", device_class: "connectivity" }, 60 * 5);
+    // It advertises all the time, so the gateway has always just heard from it.
+    add(`sensor.${p}_last_seen`, minutesAgo(0), { label: "Last Seen", device_class: "timestamp" });
+    add(`sensor.${p}_signal_strength`, -67, { label: "Signal Strength", unit_of_measurement: "dBm", device_class: "signal_strength" });
+    add(`button.${p}_clear_kill_alert`, "unknown", { label: "Clear Kill Alert" });
+    add(`button.${p}_lure_replaced`, "unknown", { label: "Lure Replaced" });
+  }
+
   // Garage: snap trap, armed and healthy.
   set("sensor.garage_trap_strikes", 7, { unit_of_measurement: "strikes" }, 60 * 30);
   set("sensor.garage_trap_battery", 82, { unit_of_measurement: "%", device_class: "battery" });
@@ -179,6 +202,18 @@
   // Mousetraps 1 and 2: Goodnature devices set up with `device:` only.
   goodnature(1, "Mousetrap 1");
   goodnature(2, "Mousetrap 2", { armed: "off", lure: 12.4, lureDue: "on", strikes: 2, seen: 95, co2: 3, rssi: -84 });
+  // Pantry: a Goodnature Mouse Trap set up with `device:` only.
+  goodnatureMouse(1, "Pantry");
+  // Loft: a NEO Coolcam Wi-Fi trap on Tasmota. Its alert isn't named like a kill alert, so it's set by hand; the device
+  // still gives the name and the art.
+  devices.neo1 = { id: "neo1", name: "Loft mousetrap", name_by_user: "Loft", manufacturer: "Tasmota", model: "NEO Coolcam Mouse Trap", area_id: "attic" };
+  for (const [entity_id, state, attrs] of [
+    ["binary_sensor.loft_mousetrap_alert", "off", { friendly_name: "Loft mousetrap Alert" }],
+    ["sensor.loft_mousetrap_battery", 75, { friendly_name: "Loft mousetrap Battery", unit_of_measurement: "%", device_class: "battery" }],
+  ]) {
+    set(entity_id, state, attrs, 60 * 20);
+    entities[entity_id] = { entity_id, device_id: "neo1", platform: "tasmota" };
+  }
   // Kitchen: bait station, sprung, with a button on the tile.
   set("sensor.kitchen_trap_status", "sprung", {}, 95);
   set("binary_sensor.kitchen_trap_battery_low", "off", { device_class: "battery" });
@@ -204,6 +239,8 @@
         bait: "sensor.basement_trap_bait", online: "binary_sensor.basement_trap_online", rearm: "binary_sensor.basement_trap_rearm" },
       { device: "gn1" },
       { device: "gn2" },
+      { device: "gm1" },
+      { device: "neo1", kill: "binary_sensor.loft_mousetrap_alert", battery: "sensor.loft_mousetrap_battery" },
       { name: "Kitchen", location: "Under the sink", style: "station",
         rearm: "sensor.kitchen_trap_status", battery: "binary_sensor.kitchen_trap_battery_low", bait: "input_number.kitchen_trap_bait",
         actions: [
@@ -296,6 +333,16 @@
     "Mousetrap 2": {
       "Armed sensor on": () => set(`binary_sensor.${gn(2, "trap_armed")}`, "on"),
       "Armed sensor off": () => set(`binary_sensor.${gn(2, "trap_armed")}`, "off"),
+    },
+    Pantry: {
+      "Strike": () => { set("binary_sensor.goodnature_mouse_trap_1_kill_alert", "on"); set("sensor.goodnature_mouse_trap_1_strikes", num("sensor.goodnature_mouse_trap_1_strikes") + 1); set("event.goodnature_mouse_trap_1_strike", new Date().toISOString()); set("sensor.goodnature_mouse_trap_1_last_seen", new Date().toISOString()); },
+      "Lure −30 d": () => set("sensor.goodnature_mouse_trap_1_lure_remaining", Math.max(0, num("sensor.goodnature_mouse_trap_1_lure_remaining") - 30)),
+      "Battery −20": () => set("sensor.goodnature_mouse_trap_1_battery", Math.max(0, num("sensor.goodnature_mouse_trap_1_battery") - 20)),
+    },
+    Loft: {
+      "Zap!": () => set("binary_sensor.loft_mousetrap_alert", "on"),
+      "Empty it": () => set("binary_sensor.loft_mousetrap_alert", "off"),
+      "Battery 25%": () => set("sensor.loft_mousetrap_battery", 25),
     },
     Kitchen: {
       "Spring it": () => set("sensor.kitchen_trap_status", "sprung"),

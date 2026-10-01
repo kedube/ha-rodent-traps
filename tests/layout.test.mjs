@@ -301,7 +301,10 @@ export default async function run(browser) {
       { name: "S", style: "snap", kill: "binary_sensor.k1", online: "binary_sensor.o1" },
       { name: "G", style: "goodnature", kill: "binary_sensor.k2", last_seen: "sensor.seen2" },
       { name: "B", style: "station", kill: "binary_sensor.k3" },
-    ] }, { "binary_sensor.k1": st("off"), "binary_sensor.o1": st("on"), "binary_sensor.k2": st("off"), "sensor.seen2": st(iso(60000), { device_class: "timestamp" }), "binary_sensor.k3": st("off") }, T.box(1000));
+      { name: "M", style: "goodnature_mouse", kill: "binary_sensor.k4" },
+      { name: "N", style: "neocam", kill: "binary_sensor.k5" },
+    ] }, { "binary_sensor.k1": st("off"), "binary_sensor.o1": st("on"), "binary_sensor.k2": st("off"), "sensor.seen2": st(iso(60000), { device_class: "timestamp" }), "binary_sensor.k3": st("off"),
+      "binary_sensor.k4": st("off"), "binary_sensor.k5": st("off") }, T.box(1000));
     await T.frame();
     const anims = c.shadowRoot.getAnimations();
     const out = {
@@ -330,9 +333,9 @@ export default async function run(browser) {
     return out;
   });
   check("animations: an all-clear card has no endless animation", idle.infinite, []);
-  check("animations: its idle animations still play", ["blink-eye", "led", "peek", "ping", "sniff", "sway", "twitch", "wiggle"].every((n) => idle.names.includes(n)), true);
-  check("animations: the mouse peeks twice, the link pings 3 times, the LED blinks 4 times, the title wiggles once",
-    [idle.counts.peek, idle.counts.ping, idle.counts.led, idle.counts.wiggle], [2, 3, 4, 1]);
+  check("animations: its idle animations still play", ["beacon", "blink-eye", "led", "peek", "ping", "sniff", "sway", "twitch", "wiggle"].every((n) => idle.names.includes(n)), true);
+  check("animations: the mouse peeks twice, the link pings 3 times, the A24 calls and the Mouse Trap's LED blinks 4 times, the title wiggles once",
+    [idle.counts.peek, idle.counts.ping, idle.counts.beacon, idle.counts.led, idle.counts.wiggle], [2, 3, 4, 4, 1]);
   check("animations: the mouse stops where it's drawn, with nothing jumping", [idle.jumps, idle.mouseInView], [[], true]);
 
   const alerts = await page.evaluate(async () => {
@@ -462,6 +465,8 @@ export default async function run(browser) {
       "--rt-gn-lure": "--rodent-trap-goodnature-lure-color", "--rt-can-band": "--rodent-trap-goodnature-canister-color",
       "--rt-stn-body": "--rodent-trap-station-body-color", "--rt-stn-lid": "--rodent-trap-station-lid-color",
       "--rt-stn-hole": "--rodent-trap-station-entrance-color", "--rt-stn-block": "--rodent-trap-station-bait-color",
+      "--rt-gm-body": "--rodent-trap-goodnature-mouse-body-color", "--rt-gm-hole": "--rodent-trap-goodnature-mouse-entrance-color",
+      "--rt-nc-body": "--rodent-trap-neocam-body-color", "--rt-nc-hole": "--rodent-trap-neocam-entrance-color", "--rt-nc-spark": "--rodent-trap-neocam-spark-color",
     };
     const box = T.box(500);
     const c = T.card({ title: "Traps", traps: [{ name: "A", kill: "binary_sensor.k" }] }, { "binary_sensor.k": st("off") }, box);

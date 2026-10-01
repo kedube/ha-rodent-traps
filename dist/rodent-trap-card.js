@@ -16,7 +16,7 @@
   // Options that only make sense on a trap. In the single-trap form they sit on the card itself, along with `style`.
   const TRAP_ONLY_KEYS = ["device", "name", "location", ...ROLE_KEYS, "holds", "actions"];
   const SHORTHAND_KEYS = TRAP_KEYS.filter((k) => k === "style" || TRAP_ONLY_KEYS.includes(k));
-  const TRAP_STYLES = ["snap", "goodnature", "station"];
+  const TRAP_STYLES = ["snap", "goodnature", "goodnature_mouse", "neocam", "station"];
   const STYLE_WORDS = [...TRAP_STYLES, "auto"];
   const SORT_ORDERS = ["config", "status", "name"];
   const DURATION_KEYS = ["stale_after", "offline_after"];
@@ -458,7 +458,6 @@
     return {
       name: (d && (d.name_by_user || d.name)) || "",
       area: (areaId && hass.areas && hass.areas[areaId] && hass.areas[areaId].name) || "",
-      maker: d ? `${d.manufacturer || ""} ${d.model || ""}` : "",
     };
   }
 
@@ -480,6 +479,22 @@
     let s = full;
     if (dev && s.toLowerCase().startsWith(dev.toLowerCase())) s = s.slice(dev.length).trim();
     return s ? s.charAt(0).toUpperCase() + s.slice(1) : full;
+  }
+
+  /**
+   * The art a device's maker and model call for, or null. Goodnature's two traps have the same maker: the Mouse Trap
+   * says so in its model or in the name its integration gave it ("Goodnature Mouse Trap 1"), and it has no CO2. A NEO
+   * Coolcam trap is often listed under Tuya or Tasmota, so its own name counts too, but only when it says it's a trap:
+   * NEO Coolcam also makes the door sensors people stick on snap traps. A name you gave the device doesn't count, so a
+   * Goodnature A24 you called "Mousetrap 1" stays an A24.
+   */
+  function deviceStyle(d, hasCo2) {
+    if (!d) return null;
+    const maker = `${d.manufacturer || ""} ${d.model || ""}`;
+    const own = `${maker} ${d.name || ""}`;
+    if (/goodnature/i.test(maker)) return !hasCo2 && !/\ba24\b/i.test(own) && /\bmouse\s*trap\b/i.test(own) ? "goodnature_mouse" : "goodnature";
+    if (/\bnas-?ma01/i.test(own) || (/neo\s*cool\s*cam|\bneocam\b/i.test(own) && /mouse|trap/i.test(own))) return "neocam";
+    return /station/i.test(maker) ? "station" : null;
   }
 
   function discoverDevice(hass, deviceId) {
@@ -525,8 +540,7 @@
         used.add(match.id);
       }
     }
-    const maker = deviceInfo(hass, deviceId).maker;
-    const style = /goodnature/i.test(maker) ? "goodnature" : /station/i.test(maker) ? "station" : null;
+    const style = deviceStyle(hass.devices && hass.devices[deviceId], !!roles.co2);
     const result = { roles, holds, style, incomplete, devices: hass.devices, ids: entries.map((e) => e.id) };
     cache.set(deviceId, result);
     return result;
@@ -999,28 +1013,109 @@
     <circle class="spring-in" cx="72" cy="63" r="1.8"/>`;
   }
 
-  function goodnatureStage(m) {
+  /** An ellipse turned by `deg`, as a path: holes cut in a shape drawn with fill-rule evenodd. */
+  function ovalPath(cx, cy, rx, ry, deg) {
+    const t = (deg * Math.PI) / 180;
+    const p = (s) => `${+(cx + s * rx * Math.cos(t)).toFixed(2)} ${+(cy + s * rx * Math.sin(t)).toFixed(2)}`;
+    return `M${p(-1)}A${rx} ${ry} ${deg} 1 0 ${p(1)}A${rx} ${ry} ${deg} 1 0 ${p(-1)}Z`;
+  }
+
+  // The A24's trap stand, side on: a wall of slanted slots with a doorway at the end the mouse comes in by. The slots
+  // and doorway are holes, as they are in the real stand, so the strike chamber and a caught mouse show through them.
+  const A24_STAND = "M42 81.5V58.2q0-2.6 2.6-2.5L108.5 59.4q2.5.1 2.5 2.6V81.5H108.5V76a6.25 6.25 0 0 0-12.5 0V81.5Z" +
+    [[63, 59, 5], [69, 54.5, 5], [75, 59, 4]].map(([y, x0, n]) => Array.from({ length: n }, (_, i) => ovalPath(x0 + i * 9, y, 3.1, 1.3, -58)).join("")).join("");
+
+  /**
+   * Goodnature A24: the black trap with its orange head and CO2 cartridge, resting in its stand. The mouse climbs into
+   * the stand, reaches up the strike chamber for the lure under the Smart Cap, and the CO2-driven piston drops it back
+   * into the stand.
+   */
+  function goodnatureStage(m, uid) {
     const lvl = baitLevel(m);
-    const lure = (12.4 * lvl) / 100;
+    const lure = (7.4 * lvl) / 100;
     const noGas = m.configured.includes("co2") && m.co2.empty;
+    const fired = m.scene === "kill" || m.scene === "sprung";
     return `
-    <ellipse class="shadow" cx="80" cy="82" rx="50" ry="3.2"/>
-    <rect class="post" x="38" y="8" width="15" height="74" rx="1.5"/>
-    <path class="grain" d="M42.5 14V78M47.5 24V72M50 10V40"/>
-    <rect class="gn-bracket" x="51" y="29" width="13" height="4" rx="1"/>
-    <rect class="gn-bracket" x="51" y="50" width="13" height="4" rx="1"/>
-    <rect class="gn-can${noGas ? " empty" : ""}" x="67.5" y="16.5" width="15" height="10" rx="3"/>
-    <rect class="gn-can-band" x="67.5" y="20" width="15" height="2.6"/>
-    <rect class="gn-body" x="62" y="25" width="26" height="36" rx="6"/>
-    <rect class="gn-shine" x="65.5" y="29" width="3" height="27" rx="1.5"/>
-    <rect class="gn-stripe" x="62" y="36" width="26" height="3"/>
-    <circle class="gn-led" cx="82.5" cy="31" r="1.7"/>
-    <rect class="gn-window${lvl <= 0 ? " empty" : ""}" x="77" y="42" width="7" height="14" rx="2.5"/>
-    ${lure > 0 ? `<rect class="gn-lure" x="77.8" y="${(55.2 - lure).toFixed(2)}" width="5.4" height="${lure.toFixed(2)}" rx="2"/>` : ""}
-    <ellipse class="gn-mouth" cx="75" cy="61" rx="11.5" ry="3"/>
-    ${m.scene === "armed" ? `<g transform="translate(97 57)">${MOUSE_ALIVE}</g>` : ""}
-    ${m.scene === "kill" ? `<g class="victim"><g transform="translate(131 61.5) scale(-.85 .85)">${MOUSE_CAUGHT}${stars(13, -3)}</g></g>
-    <g class="puff"><circle cx="70" cy="64" r="3"/><circle cx="79" cy="65" r="2.4"/><circle cx="75" cy="67.5" r="3.4"/></g>` : ""}`;
+    <ellipse class="shadow" cx="77" cy="82" rx="42" ry="3.2"/>
+    ${m.scene === "kill" ? `<clipPath id="${uid}-stand"><path d="M42 81.5V56L111 59.6V81.5Z"/></clipPath>
+    <g class="victim" clip-path="url(#${uid}-stand)"><g class="gn-fall"><g transform="translate(63 58.5) scale(.8)">${MOUSE_CAUGHT}</g></g></g>` : ""}
+    <g transform="translate(57 57) rotate(-32)"><g class="gn-trap">
+      <rect class="gn-body" x="-7.5" y="-18" width="15" height="34" rx="2"/>
+      <rect class="gn-window${lvl <= 0 ? " empty" : ""}" x="-3" y="-15.6" width="6" height="9" rx="2.2"/>
+      ${lure > 0 ? `<rect class="gn-lure" x="-2.2" y="${(-7.4 - lure).toFixed(2)}" width="4.4" height="${lure.toFixed(2)}" rx="1.6"/>` : ""}
+      <rect class="gn-cap" x="-8.7" y="-30" width="17.4" height="13" rx="2.6"/>
+      <path class="gn-rib" d="M-5.2-27.6V-19.4M-2.6-27.6V-19.4M0-27.6V-19.4M2.6-27.6V-19.4M5.2-27.6V-19.4"/>
+      <path class="gn-waves" d="M-4.6-33.6a6.5 6.5 0 0 1 9.2 0M-8.2-37.2a11.6 11.6 0 0 1 16.4 0"/>
+      <rect class="gn-body" x="4" y="-6.5" width="34" height="13" rx="2.5"/>
+      <path class="gn-shine" d="M8-4.1H34.5"/>
+      <text class="gn-label" x="22" y="2.6" text-anchor="middle">A24</text>
+      <rect class="gn-can${noGas ? " empty" : ""}" x="39.3" y="5.5" width="6.6" height="15.5" rx="3.3"/>
+      <rect class="gn-can-band" x="39.3" y="10.5" width="6.6" height="2.5"/>
+      <rect class="gn-head" x="36.5" y="-8" width="11.5" height="16" rx="2.6"/>
+      <circle class="gn-screw" cx="42.3" cy="-4.4" r=".95"/><circle class="gn-screw" cx="42.3" cy="4.4" r=".95"/>
+      ${fired ? `<g class="gn-puff"><circle cx="52" cy="-1" r="2.6"/><circle cx="54.5" cy="-5" r="2"/><circle cx="55.5" cy="2.5" r="2.3"/></g>` : ""}
+    </g></g>
+    <path class="gn-stand" fill-rule="evenodd" d="${A24_STAND}"/>
+    <circle class="gn-knob" cx="49" cy="62.4" r="4.3"/>
+    <circle class="gn-knob-in" cx="49" cy="62.4" r="1.5"/>
+    ${m.scene === "armed" ? `<g transform="translate(113 57)">${MOUSE_ALIVE}</g>` : ""}
+    ${m.scene === "kill" ? `<g class="victim">${stars(124, 63)}</g>` : ""}`;
+  }
+
+  /**
+   * Goodnature Mouse Trap: the white triangular trap, seen from its entrance end. An infrared beam across the entrance
+   * fires the striker down onto the mouse, which then slides back into the trap's catch chamber.
+   */
+  function goodnatureMouseStage(m) {
+    const lvl = baitLevel(m);
+    const donut = lvl <= 0 ? 0 : 0.5 + 0.5 * (lvl / 100);
+    const fired = m.scene === "kill" || m.scene === "sprung";
+    return `
+    <ellipse class="shadow" cx="96" cy="82" rx="46" ry="3.2"/>
+    <path class="gm-side" d="M54.38 78.83Q53 81.5 56 81.5H93L113.9 41H82.9Q73.9 41 69.77 49Z"/>
+    <path class="gm-shade" d="M54.38 78.83Q53 81.5 56 81.5H93L113.9 41H82.9Q73.9 41 69.77 49Z"/>
+    <path class="gm-rib" d="M57.5 80.5 75.2 46.3M61.5 80.5 79.2 46.3M65.5 80.5 83.2 46.3M69.5 80.5 87.2 46.3"/>
+    <path class="gm-seam" d="M73.5 81.5 94.4 41"/>
+    <path class="gm-ridge" d="M84 41.9H111"/>
+    <rect class="gm-btn" x="78.5" y="39.3" width="9" height="3.4" rx="1.7"/>
+    <circle class="gm-led" cx="92" cy="41.2" r="1.2"/>
+    <path class="gm-face" d="M111.87 45Q116 37 120.13 45L136.7 77.06Q139 81.5 134 81.5H98Q93 81.5 95.3 77.06Z"/>
+    <text class="gm-logo" x="116" y="58" text-anchor="middle">g</text>
+    <rect class="gm-hole" x="98.5" y="62" width="35" height="14.5" rx="5"/>
+    ${donut ? `<g class="gm-donut" style="transform:scale(${donut.toFixed(3)})"><ellipse cx="107" cy="72.2" rx="5" ry="3.4"/><ellipse class="gm-donut-hole" cx="107" cy="71.9" rx="1.8" ry="1.05"/></g>` : ""}
+    ${fired ? `<path class="gm-beam" d="M101 68H131"/><rect class="gm-striker" x="116.5" y="62.5" width="4.6" height="13.6" rx="1.2"/>` : ""}
+    ${m.scene === "armed" ? `<g transform="translate(140 57)">${MOUSE_ALIVE}</g>` : ""}
+    ${m.scene === "kill" ? `<g class="victim"><path class="tail-out" d="M124 76C129.5 79.5 135 82.4 146 80.6"/>${stars(116, 30)}</g>` : ""}`;
+  }
+
+  /**
+   * NEO Coolcam Wi-Fi mouse trap: a black electric trap with a carry handle, a power switch and a red light. A mouse
+   * that walks in onto the plate gets a high-voltage shock; the light flashes and the trap beeps.
+   */
+  function neocamStage(m) {
+    const lvl = baitLevel(m);
+    const dab = lvl <= 0 ? 0 : 0.45 + 0.55 * (lvl / 100);
+    const fired = m.scene === "kill" || m.scene === "sprung";
+    return `
+    <ellipse class="shadow" cx="87" cy="82" rx="54" ry="3.4"/>
+    <path class="nc-body" fill-rule="evenodd" d="M37 81.5V61.5Q37 57.6 41 57.4L65.5 56.5Q73.5 56.2 79.5 50.4L86.6 43.4Q89.8 40.3 94.6 40.3H119.5Q124.2 40.3 127.2 44.2L134.6 53.6Q137 56.8 137 61V81.5ZM100.5 45.4H115.5A3.3 3.3 0 0 1 115.5 52H100.5A3.3 3.3 0 0 1 100.5 45.4Z"/>
+    <path class="nc-hi" d="M42 59.6 65.5 58.7M91 43.4H118.5"/>
+    <path class="nc-skirt" d="M37.6 75H136.4"/>
+    <path class="nc-vent" d="M42.5 64.5 50 62M42.5 68.5 50 66M42.5 72.5 50 70"/>
+    <path class="nc-grille" d="M87 56h5.5M87 59h5.5M87 62h5.5"/>
+    <rect class="nc-switch" x="61" y="53.2" width="7.5" height="3.6" rx="1.1"/>
+    <path class="nc-switch-mark" d="M63.4 54.3V55.7"/>
+    <circle class="nc-led" cx="73.5" cy="55.1" r="1.3"/>
+    <path class="nc-beep" d="M70 51a5 5 0 0 1 7 0M67.6 48.4a8.4 8.4 0 0 1 11.8 0"/>
+    <path class="nc-sign" d="M106 59.5 112 70H100Z"/>
+    <path class="nc-sign-bolt" d="M106.6 62.4 104.4 66.2H107L105.4 69"/>
+    <path class="nc-door" d="M121 81.5V70.5Q121 67.5 124 67.5H131Q134 67.5 134 70.5V81.5Z"/>
+    ${dab ? `<ellipse class="nc-bait" cx="127" cy="79.6" rx="${(3 * dab).toFixed(2)}" ry="${(1.9 * dab).toFixed(2)}"/>` : ""}
+    <rect class="nc-plate" x="121" y="80" width="12" height="1.5"/>
+    ${fired ? `<g class="nc-bolts"><path d="M120.5 75 114.5 72.2 117.6 71 111 66.6"/><path d="M134.5 74.5 140.6 71 137.6 70 143.8 65.4"/><path d="M127.5 66.6 125.2 61.4 128.8 61.9 126.4 55.8"/></g>
+    <g class="nc-smoke"><circle cx="127" cy="66" r="2.2"/><circle cx="129.5" cy="62.8" r="1.7"/><circle cx="126.5" cy="60" r="1.3"/></g>` : ""}
+    ${m.scene === "armed" ? `<g transform="translate(139 57)">${MOUSE_ALIVE}</g>` : ""}
+    ${m.scene === "kill" ? `<g class="victim"><path class="tail-out" d="M131.5 80.6C139 81.6 145 84.4 156 80.6"/>${stars(124, 33)}</g>` : ""}`;
   }
 
   function stationStage(m) {
@@ -1044,7 +1139,9 @@
 
   const ART = {
     snap: { draw: snapStage, word: "SNAP!", burst: [172, 36] },
-    goodnature: { draw: goodnatureStage, word: "POP!", burst: [124, 32] },
+    goodnature: { draw: goodnatureStage, word: "POP!", burst: [146, 32] },
+    goodnature_mouse: { draw: goodnatureMouseStage, word: "WHAM!", burst: [168, 34] },
+    neocam: { draw: neocamStage, word: "ZAP!", burst: [168, 34] },
     station: { draw: stationStage, word: "ZAP!", burst: [178, 32] },
   };
 
@@ -1071,7 +1168,7 @@
   </defs>
   <ellipse class="glow" cx="82" cy="62" rx="92" ry="34" fill="url(#${uid}-glow)"/>
   <path class="floor" d="M-22 81.5H222"/>
-  <g class="stage">${art.draw(m)}</g>
+  <g class="stage">${art.draw(m, uid)}</g>
   ${badge}
   ${burst}
 </svg>`;
@@ -1426,10 +1523,16 @@
   --rt-fur-hi: var(--rodent-trap-mouse-belly-color, #d3d8de);
   --rt-pink: var(--rodent-trap-mouse-skin-color, #f1a2b0);
   --rt-eye: var(--rodent-trap-mouse-eye-color, #26282b);
-  --rt-gn-body: var(--rodent-trap-goodnature-body-color, #2d3833);
-  --rt-gn-stripe: var(--rodent-trap-goodnature-stripe-color, #86b640);
+  --rt-gn-body: var(--rodent-trap-goodnature-body-color, #25282a);
+  /* Goodnature's orange: the A24's head and stand knob, and the Mouse Trap's button. */
+  --rt-gn-stripe: var(--rodent-trap-goodnature-stripe-color, #ee6b2f);
   --rt-gn-lure: var(--rodent-trap-goodnature-lure-color, #e39b3b);
   --rt-can-band: var(--rodent-trap-goodnature-canister-color, #d9463b);
+  --rt-gm-body: var(--rodent-trap-goodnature-mouse-body-color, #eef0ec);
+  --rt-gm-hole: var(--rodent-trap-goodnature-mouse-entrance-color, #18211d);
+  --rt-nc-body: var(--rodent-trap-neocam-body-color, #2b2e33);
+  --rt-nc-hole: var(--rodent-trap-neocam-entrance-color, #0e1012);
+  --rt-nc-spark: var(--rodent-trap-neocam-spark-color, #6fd3ff);
   --rt-stn-body: var(--rodent-trap-station-body-color, #3f6150);
   --rt-stn-lid: var(--rodent-trap-station-lid-color, #4f7763);
   --rt-stn-hole: var(--rodent-trap-station-entrance-color, #16201b);
@@ -1718,7 +1821,7 @@ ha-card { overflow: hidden; }
 .snap-text text { font: 800 10px/1 system-ui, sans-serif; fill: var(--rt-bad); letter-spacing: .02em; }
 
 /* scene: snap trap */
-.scene .wood, .scene .post { fill: var(--rt-wood); }
+.scene .wood { fill: var(--rt-wood); }
 .scene .wood-edge { fill: var(--rt-wood-edge); }
 .scene .wood-hi { stroke: rgba(255, 255, 255, .35); stroke-width: 1; }
 .scene .plate { fill: var(--rt-metal-hi); stroke: var(--rt-metal); stroke-width: .8; }
@@ -1739,27 +1842,86 @@ ha-card { overflow: hidden; }
 .scene .spring { fill: var(--rt-metal-hi); stroke: var(--rt-metal); stroke-width: 1.4; }
 .scene .spring-in { fill: var(--rt-metal); }
 
-/* scene: Goodnature-style CO2 trap */
-.art-goodnature { --peek: 132px; }
-.scene .gn-bracket { fill: var(--rt-metal); }
+/* scene: Goodnature A24. The trap and the stand are near black, so they get a faint outline in the text colour: dark
+   on a light card, light on a dark one. */
+.art-goodnature { --peek: 112px; }
+.scene .gn-body, .scene .gn-cap, .scene .gn-stand { fill: var(--rt-gn-body); stroke: var(--rt-text); stroke-opacity: .22; stroke-width: .7; }
+.scene .gn-rib { stroke: rgba(255, 255, 255, .16); stroke-width: .9; stroke-linecap: round; }
+.scene .gn-shine { stroke: rgba(255, 255, 255, .16); stroke-width: 1.5; stroke-linecap: round; }
+.scene .gn-label { font: 800 6.6px/1 system-ui, sans-serif; fill: #eceff1; }
+.scene .gn-head, .scene .gn-knob { fill: var(--rt-gn-stripe); stroke: rgba(0, 0, 0, .25); stroke-width: .6; }
+.scene .gn-screw, .scene .gn-knob-in { fill: rgba(0, 0, 0, .3); }
 .scene .gn-can { fill: var(--rt-metal-hi); stroke: var(--rt-metal); stroke-width: .8; }
-.scene .gn-can.empty { stroke: var(--rt-bad); }
+.scene .gn-can.empty { stroke: var(--rt-bad); stroke-width: 1.2; }
 .scene .gn-can-band { fill: var(--rt-can-band); }
-.scene .gn-body { fill: var(--rt-gn-body); stroke: var(--rt-text); stroke-opacity: .18; stroke-width: .8; }
-.scene .gn-shine { fill: rgba(255, 255, 255, .13); }
-.scene .gn-stripe { fill: var(--rt-gn-stripe); }
-.scene .gn-mouth { fill: #0e1210; }
 .scene .gn-window { fill: rgba(255, 255, 255, .1); stroke: rgba(255, 255, 255, .35); stroke-width: .7; }
 .scene .gn-window.empty { stroke: var(--rt-bad); }
 .scene .gn-lure { fill: var(--rt-gn-lure); }
-.scene .gn-led { fill: #5d6468; }
-.st-armed .gn-led { fill: var(--rt-ok); animation: led 2.6s 4; }
-.st-kill .gn-led { fill: var(--rt-bad); animation: led .9s infinite; }
-.st-sprung .gn-led, .st-check .gn-led { fill: var(--rt-warn); animation: led 1.6s infinite; }
-/* The middle of the three puff circles (goodnatureStage). */
-.scene .puff { fill: var(--rt-metal-hi); opacity: 0; transform-box: view-box; transform-origin: 74.2px 65.95px; }
-.snap-now .puff { animation: puff .9s .2s ease-out both; }
-.art-goodnature.snap-now .victim { animation: drop .45s .24s cubic-bezier(.5, 0, 1, 1) both; }
+/* The Smart Cap's signal: it pulses four times when the trap is set, then goes quiet; a catch or a misfire keeps calling. */
+.scene .gn-waves { fill: none; stroke: var(--rt-ok); stroke-width: 1.5; stroke-linecap: round; opacity: 0; }
+.st-armed .gn-waves { animation: beacon 2.6s 4; }
+.st-kill .gn-waves { stroke: var(--rt-bad); opacity: 1; animation: beacon 1.3s infinite; }
+.st-sprung .gn-waves, .st-check .gn-waves { stroke: var(--rt-warn); opacity: 1; animation: beacon 2s infinite; }
+/* The trap's turning point is where the strike chamber meets the barrel, its own 0,0 (goodnatureStage). */
+.art-goodnature.snap-now .gn-trap { transform-box: view-box; transform-origin: 0 0; animation: kick .45s .24s ease-out both; }
+.art-goodnature.snap-now .gn-fall { animation: drop .45s .26s cubic-bezier(.5, 0, 1, 1) both; }
+/* The middle of the three puff circles, in the trap's own coordinates. */
+.scene .gn-puff { fill: var(--rt-metal-hi); opacity: 0; transform-box: view-box; transform-origin: 54px -1.2px; }
+.snap-now .gn-puff { animation: puff .9s .24s ease-out both; }
+
+/* scene: Goodnature Mouse Trap */
+.art-goodnature_mouse { --peek: 88px; }
+.scene .gm-face { fill: var(--rt-gm-body); stroke: var(--rt-text); stroke-opacity: .2; stroke-width: .7; stroke-linejoin: round; }
+.scene .gm-side { fill: var(--rt-gm-body); stroke: var(--rt-text); stroke-opacity: .2; stroke-width: .7; stroke-linejoin: round; }
+/* The long side is in shade. A second copy of it, darkened, rather than a filter, which Safari ignores in SVG. */
+.scene .gm-shade { fill: #000; fill-opacity: .07; }
+.scene .gm-rib, .scene .gm-seam { stroke: rgba(0, 0, 0, .12); stroke-width: .9; stroke-linecap: round; }
+.scene .gm-seam { stroke: rgba(0, 0, 0, .2); }
+.scene .gm-logo { font: 600 9px/1 Georgia, serif; fill: rgba(0, 0, 0, .14); }
+.scene .gm-btn { fill: var(--rt-gn-stripe); }
+.scene .gm-ridge { stroke: rgba(255, 255, 255, .7); stroke-width: 1.2; stroke-linecap: round; }
+.scene .gm-hole { fill: var(--rt-gm-hole); }
+.scene .gm-donut { fill: var(--rt-gn-lure); transform-box: view-box; transform-origin: 107px 75.6px; transition: transform .8s cubic-bezier(.3, 1.4, .5, 1); }
+.scene .gm-donut-hole { fill: var(--rt-gm-hole); }
+.scene .gm-led { fill: #b9bec2; }
+.st-armed .gm-led { fill: var(--rt-ok); animation: led 2.6s 4; }
+.st-kill .gm-led { fill: var(--rt-bad); animation: led .9s infinite; }
+.st-sprung .gm-led, .st-check .gm-led { fill: var(--rt-warn); animation: led 1.6s infinite; }
+/* The infrared beam trips, then the striker drops across the entrance and goes back up. The striker hangs from the
+   top of the entrance (goodnatureMouseStage). */
+.scene .gm-beam { fill: none; stroke: var(--rt-bad); stroke-width: .8; stroke-dasharray: 1.6 1.2; opacity: 0; }
+.snap-now .gm-beam { animation: beam .3s .02s both; }
+.scene .gm-striker { fill: var(--rt-metal-hi); stroke: var(--rt-metal); stroke-width: .6; transform-box: view-box; transform-origin: 118.8px 62.5px; transform: scaleY(0); }
+.snap-now .gm-striker { animation: strike .7s .24s both; }
+
+/* scene: NEO Coolcam electric trap */
+.art-neocam { --peek: 86px; }
+.scene .nc-body { fill: var(--rt-nc-body); stroke: var(--rt-text); stroke-opacity: .22; stroke-width: .7; stroke-linejoin: round; }
+.scene .nc-hi { fill: none; stroke: rgba(255, 255, 255, .14); stroke-width: 1.3; stroke-linecap: round; }
+.scene .nc-skirt { stroke: rgba(0, 0, 0, .35); stroke-width: .8; }
+.scene .nc-vent { fill: none; stroke: var(--rt-nc-hole); stroke-width: 2.1; stroke-linecap: round; }
+.scene .nc-grille { stroke: rgba(0, 0, 0, .4); stroke-width: .9; stroke-linecap: round; }
+.scene .nc-switch { fill: #17191c; stroke: rgba(255, 255, 255, .2); stroke-width: .5; }
+.scene .nc-switch-mark { stroke: rgba(255, 255, 255, .6); stroke-width: .6; stroke-linecap: round; }
+.scene .nc-door { fill: var(--rt-nc-hole); }
+/* A high-voltage sticker: says "electric trap" at a glance. */
+.scene .nc-sign { fill: var(--rt-cheese); stroke: var(--rt-cheese-dark); stroke-width: .5; stroke-linejoin: round; }
+.scene .nc-sign-bolt { fill: none; stroke: #26282b; stroke-width: .9; stroke-linecap: round; stroke-linejoin: round; }
+.scene .nc-plate { fill: var(--rt-metal); }
+.scene .nc-bait { fill: var(--rt-cheese); }
+.scene .nc-led { fill: #4a1c1c; }
+.st-kill .nc-led { fill: var(--rt-bad); animation: led .6s infinite; }
+.st-sprung .nc-led, .st-check .nc-led { fill: var(--rt-warn); animation: led 1.6s infinite; }
+/* It beeps on a catch, for as long as the catch is reported. */
+.scene .nc-beep { fill: none; stroke: var(--rt-bad); stroke-width: 1.2; stroke-linecap: round; opacity: 0; }
+.st-kill .nc-beep { opacity: 1; animation: beacon 1.2s infinite; }
+.scene .nc-bolts { fill: none; stroke: var(--rt-nc-spark); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
+.snap-now .nc-bolts { animation: crackle .7s .26s both; }
+.art-neocam.snap-now .nc-vent, .art-neocam.snap-now .nc-door { animation: zap-vent .1s .28s 6 alternate both; }
+.art-neocam.snap-now .nc-plate { animation: zap-plate .1s .28s 6 alternate both; }
+/* The middle of the smoke, over the door (neocamStage). */
+.scene .nc-smoke { fill: var(--rt-off); opacity: 0; transform-box: view-box; transform-origin: 127.5px 63px; }
+.snap-now .nc-smoke { animation: smoke 1.3s .8s ease-out both; }
 
 /* scene: bait station */
 .art-station { --peek: 92px; }
@@ -1807,9 +1969,17 @@ ha-card { overflow: hidden; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes fade-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 @keyframes pop { 0% { opacity: 0; transform: scale(.2); } 12% { opacity: 1; transform: scale(1.25); } 22% { transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: scale(1); } }
-@keyframes puff { 0% { opacity: .9; transform: scale(.3); } 100% { opacity: 0; transform: translateY(-4px) scale(1.8); } }
+@keyframes puff { 0% { opacity: 0; transform: scale(.3); } 10% { opacity: .9; } 100% { opacity: 0; transform: translateY(-4px) scale(1.8); } }
 @keyframes drop { 0% { opacity: 0; transform: translateY(-16px); } 25% { opacity: 1; } 100% { transform: translateY(0); } }
 @keyframes zap { 0% { fill: rgba(255, 255, 255, .16); } 100% { fill: #fff59a; } }
+@keyframes beacon { 0%, 100% { opacity: 0; } 30%, 60% { opacity: 1; } }
+@keyframes kick { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(-5deg); } 55% { transform: rotate(2deg); } 80% { transform: rotate(-.6deg); } }
+@keyframes beam { 0%, 100% { opacity: 0; } 15%, 85% { opacity: 1; } }
+@keyframes strike { 0% { transform: scaleY(0); } 12%, 55% { transform: scaleY(1); } 100% { transform: scaleY(0); } }
+@keyframes crackle { 0%, 100% { opacity: 0; } 8%, 22%, 44%, 66% { opacity: 1; } 15%, 33%, 55%, 80% { opacity: .1; } }
+@keyframes zap-vent { 0% { stroke: var(--rt-nc-hole); fill: var(--rt-nc-hole); } 100% { stroke: var(--rt-nc-spark); fill: var(--rt-nc-spark); } }
+@keyframes zap-plate { 0% { fill: var(--rt-metal); } 100% { fill: #fff; } }
+@keyframes smoke { 0% { opacity: 0; transform: scale(.4); } 15% { opacity: .7; } 100% { opacity: 0; transform: translateY(-8px) scale(1.5); } }
 
 .paused *, .paused *::before, .paused *::after { animation-play-state: paused !important; }
 .no-anim *, .no-anim *::before, .no-anim *::after { animation: none !important; transition: none !important; }
@@ -2925,7 +3095,9 @@ ha-card { overflow: hidden; }
   const ACTION_DOMAINS = ["button", "input_button", "script", "scene", "automation", "switch", "input_boolean"];
   const STYLE_OPTIONS = [
     { value: "snap", label: "Snap trap" },
-    { value: "goodnature", label: "Goodnature / CO\u2082 trap" },
+    { value: "goodnature", label: "Goodnature A24 (CO\u2082)" },
+    { value: "goodnature_mouse", label: "Goodnature Mouse Trap" },
+    { value: "neocam", label: "NEO Coolcam electric trap" },
     { value: "station", label: "Bait station" },
   ];
   const pct = { number: { min: 0, max: 100, mode: "box", unit_of_measurement: "%" } };
