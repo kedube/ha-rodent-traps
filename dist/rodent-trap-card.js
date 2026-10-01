@@ -6,7 +6,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.2";
+  const VERSION = "1.3";
   const CARD_TAG = "rodent-trap-card";
   const EDITOR_TAG = "rodent-trap-card-editor";
 
