@@ -10,6 +10,13 @@ A Home Assistant dashboard card that shows the state of your smart rodent traps 
 
 ![The card in a dark theme with eight traps, most urgent first: a snap trap with a catch, a bait station that needs re-arming, an offline snap trap, a Goodnature A24 whose sensors disagree, and four armed traps: a snap trap, a Goodnature A24 in its stand, a Goodnature Mouse Trap and a NEO Coolcam electric trap](images/card-dark.png)
 
+## Companion projects
+
+Two related projects bring traps into Home Assistant for the card to show:
+
+- **[Goodnature gateway](https://github.com/kedube/ha-goodnature-gateway)**: an ESP32 running ESPHome that monitors Goodnature A24 Smart Traps and Mouse Traps over Bluetooth. Each trap shows up as its own device. Pick it and the card fills in the rest. See [Goodnature A24 Smart Traps over Bluetooth](#goodnature-a24-smart-traps-over-bluetooth).
+- **[Tuya Smart MouseTrap](https://github.com/kedube/tuya-smart-mousetrap)**: replaces the Tuya cloud firmware in the NEO Coolcam electric trap with OpenBeken, so the trap reports whether it's armed, its catches and its battery to Home Assistant over MQTT, with no cloud. Pick the trap's device (such as **Mouse_Trap_1**). If the tile shows a snap trap, set `style: neocam` on the trap.
+
 ## Features
 
 - **Set up a trap by picking its device.** The card matches the device's entity names and device classes to fill in every reading, the device's low-battery, lure-due and low-CO₂ alerts, and the lure capacity. It also finds the clear-kill-alert, lure-replaced, CO₂-canister-replaced and ping buttons. The name and location come from the device and its area.
