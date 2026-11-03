@@ -47,15 +47,15 @@ Two related projects bring traps into Home Assistant for the card to show:
 
 ### HACS (recommended)
 
-The card isn't in the HACS default store yet, so add it as a custom repository:
+The card is in the HACS default store:
 
 1. In Home Assistant, open **HACS**.
-2. Open the **⋮** menu (top right) and choose **Custom repositories**.
-3. Enter `https://github.com/kedube/ha-rodent-traps` as the repository and choose **Dashboard** as the type. Select **Add**.
-4. Search HACS for **Rodent Trap Card**, open it and select **Download**.
-5. Reload your browser (on the mobile app, restart the app or clear the frontend cache).
+2. Search for **Rodent Trap Card**, open it and select **Download**.
+3. Reload your browser (on the mobile app, restart the app or clear the frontend cache).
 
-The **Open in HACS** button at the top of this page does steps 1 to 3 for you.
+The **Open in HACS** button at the top of this page takes you straight to the card in HACS.
+
+If you added this repository as a custom repository before the card was in the default store, you don't need to change anything. HACS now lists it as a default repository and keeps offering updates.
 
 HACS registers the dashboard resource for you. If you manage dashboards in YAML mode, add the resource yourself:
 
