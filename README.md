@@ -1,8 +1,11 @@
 # Rodent Trap Card
 
-A Home Assistant dashboard card that shows the state of your smart rodent traps at a glance: catches, strikes, battery, bait, CO₂ shots left, connectivity, signal strength, when each trap was last seen and whether it needs re-arming. Each trap gets an animated illustration. There are five kinds: a snap trap, a Goodnature A24, a Goodnature Mouse Trap, a NEO Coolcam electric trap and a bait station. You can run a trap's buttons (clear kill alert, lure replaced, CO₂ canister replaced, ping) straight from the tile.
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
+[![Latest release](https://img.shields.io/badge/dynamic/xml?url=https%3A%2F%2Fgithub.com%2Fkedube%2Fha-rodent-traps%2Freleases.atom&query=%2F%2F%2A%5Blocal-name%28%29%3D%27entry%27%5D%5B1%5D%2F%2A%5Blocal-name%28%29%3D%27title%27%5D&label=release&color=blue)](https://github.com/kedube/ha-rodent-traps/releases/latest)
+[![CI](https://github.com/kedube/ha-rodent-traps/actions/workflows/ci.yml/badge.svg)](https://github.com/kedube/ha-rodent-traps/actions/workflows/ci.yml)
+[![License: GPL-3.0](https://img.shields.io/github/license/kedube/ha-rodent-traps)](LICENSE)
 
-[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=kedube&repository=ha-rodent-traps&category=plugin)
+A Home Assistant dashboard card that shows the state of your smart rodent traps at a glance: catches, strikes, battery, bait, CO₂ shots left, connectivity, signal strength, when each trap was last seen and whether it needs re-arming. Each trap gets an animated illustration. There are five kinds: a snap trap, a Goodnature A24, a Goodnature Mouse Trap, a NEO Coolcam electric trap and a bait station. You can run a trap's buttons (clear kill alert, lure replaced, CO₂ canister replaced, ping) straight from the tile.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/kedube/ha-rodent-traps/main/images/snap.gif" alt="A trap tile: a mouse sniffs the cheese, then the bar snaps shut and the tile turns red with a catch alert" width="420">
@@ -45,19 +48,31 @@ Two related projects bring traps into Home Assistant for the card to show:
 
 ## Installation
 
-### HACS (recommended)
+### Marketplace or HACS (recommended)
 
-The card is in the HACS default store:
+Home Assistant 2026.11 replaced HACS with its built-in **Marketplace**. The card is in the HACS default store, so you can install it by name. The quickest way is this button, which opens it in the Marketplace (in HACS before 2026.11):
 
-1. In Home Assistant, open **HACS**.
-2. Search for **Rodent Trap Card**, open it and select **Download**.
-3. Reload your browser (on the mobile app, restart the app or clear the frontend cache).
+[![Open your Home Assistant instance and open this repository in the Marketplace or HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=kedube&repository=ha-rodent-traps&category=plugin)
 
-The **Open in HACS** button at the top of this page takes you straight to the card in HACS.
+Or find it yourself. On Home Assistant 2026.11 or later:
 
-If you added this repository as a custom repository before the card was in the default store, you don't need to change anything. HACS now lists it as a default repository and keeps offering updates.
+1. Go to **Settings → Marketplace** and search for **Rodent Trap Card**.
+2. Open it and select **Install**, then **Install** again to confirm.
+3. Reload your browser (on the mobile app, restart the app or clear the frontend cache). If a repair asks you to restart Home Assistant first, do that.
 
-HACS registers the dashboard resource for you. If you manage dashboards in YAML mode, add the resource yourself:
+On older versions, with HACS:
+
+1. Open **HACS**, search for **Rodent Trap Card**, open it and select **Download**.
+2. Reload your browser (on the mobile app, restart the app or clear the frontend cache).
+
+**Not listed?** If the search comes up empty, add the card as a custom repository, then install it as above:
+
+- **Marketplace:** in **Settings → Marketplace**, select **Add from link** (top right). Under **GitHub link**, enter `https://github.com/kedube/ha-rodent-traps` and select **Add**. The first time, the Marketplace asks you to connect GitHub, which it needs for custom repositories. If it asks for a **Type**, choose **Dashboard**.
+- **HACS:** open the **⋮** menu, choose **Custom repositories**, and add `https://github.com/kedube/ha-rodent-traps` with the type **Dashboard**.
+
+Both offer each new release as an update. Installed it with HACS already? Updating Home Assistant to 2026.11 moves it to the Marketplace by itself: it stays installed and keeps getting updates. If you added it as a custom repository before the card was in the default store, you don't need to change anything.
+
+Both register the dashboard resource for you. If you manage dashboards in YAML mode, add the resource yourself. The Marketplace's install dialog shows the one you need. With HACS, it's:
 
 ```yaml
 lovelace:
