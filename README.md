@@ -143,6 +143,8 @@ The visual editor fills in device IDs for you. To find one yourself, open the de
 
 The card checks option values when it loads. A duration it can't read, a misspelt `style` or `sort`, an unknown hold key or an action it can't run shows a configuration error that names the option. Without the check, a typo would quietly turn off offline detection or run the wrong thing.
 
+Cards with more than 25 traps show 25 at a time, with **Previous** and **Next** buttons. Sorting and summary chips apply to the current page. Each page reads the latest entity states when you open it; keeping the number of mounted tiles bounded helps large installations stay responsive.
+
 **Layout.** Tiles narrower than about 260 px (half a section, a grid card, `columns` on a phone) switch to a compact layout: the status goes under the trap's name, and each reading's icon sits above its value. Below about 180 px the readings are in one column. In the sections view the card sizes itself to its content. If you give it a fixed number of rows instead, it stays inside them and scrolls, rather than spilling over the cards below.
 
 ### Trap options
@@ -512,6 +514,7 @@ The card only displays state and runs actions you ask for. Pair it with an autom
 - **"Custom element doesn't exist: rodent-trap-card".** The resource isn't loaded. Check the resource URL, then reload the browser. On the mobile app, open **Settings → Companion app**, then **Troubleshooting** (Android) or **Debugging** (iOS), and choose **Reset frontend cache**.
 - **A device reading is wrong or missing.** Open the trap in the visual editor: each field shows which entity the device supplied. Pick a different entity to override it, or set the option to `false` in YAML to hide it.
 - **A reading shows "—".** The entity is `unavailable` or `unknown`, or its state is something the card doesn't recognise. For Catch, Trap or Link, list the device's states with `active_states`. For Strikes, point it at a numeric entity, or at the attribute that holds the count with `attribute:`. If you set `attribute:`, check that the entity has that attribute. See [Advanced entity options](#advanced-entity-options).
+- **"Range unavailable".** An entity configured as `min` or `max` is unknown, unavailable or nonnumeric. The card shows the raw reading without a percentage until the range recovers.
 - **A battery, bait or CO₂ level looks wrong.** The value is being scaled to 0–100 with the wrong range. Set `min` and `max` (empty and full), for example for a voltage, a lure life in days or a CO₂ canister with more or fewer than 24 shots.
 - **"Check trap".** The trap's armed and re-arm sensors contradict each other. Check the trap in person. If the device reports these sensors with the opposite meaning, add `invert: true` to one of them.
 - **"Entity not found".** An entity ID is misspelled or the entity was removed. The tile lists the IDs it couldn't find, including those used for `max`, `min` and `low_entity`.

@@ -131,7 +131,7 @@
     if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
     if (isEntityId(v)) {
       const st = hass && hass.states ? hass.states[v.trim()] : undefined;
-      return st ? toNum(st.state, fallback) : fallback;
+      return st ? toNum(st.state, NaN) : NaN;
     }
     return toNum(v, fallback);
   }
@@ -271,7 +271,7 @@
       const { ref, raw, stateObj, domain } = r;
       const attrs = stateObj.attributes || {};
       const s = norm(raw);
-      const n = typeof raw === "number" ? raw : s !== "" ? Number(raw) : NaN;
+      const n = typeof raw === "boolean" ? NaN : typeof raw === "number" ? raw : s !== "" ? Number(raw) : NaN;
       if (Number.isFinite(n)) {
         const unit = ref.unit !== undefined ? ref.unit : ref.attribute ? "" : attrs.unit_of_measurement || "";
         const given = (v) => v !== undefined && v !== null && v !== "";
@@ -505,7 +505,13 @@
       discoveryCache.set(hass.entities, cache);
     }
     const hit = cache.get(deviceId);
-    if (hit && !hit.incomplete && hit.devices === hass.devices) return hit;
+    const metadata = deviceEntities(hass, deviceId).map((e) => {
+      const st = hass.states && hass.states[e.entity_id];
+      const attrs = st && st.attributes;
+      return [!!st, attrs && attrs.device_class, attrs && attrs.friendly_name];
+    });
+    const signature = JSON.stringify(metadata);
+    if (hit && !hit.incomplete && hit.devices === hass.devices && hit.signature === signature) return hit;
 
     const devName = slug(deviceInfo(hass, deviceId).name);
     let incomplete = false;
@@ -541,7 +547,7 @@
       }
     }
     const style = deviceStyle(hass.devices && hass.devices[deviceId], !!roles.co2);
-    const result = { roles, holds, style, incomplete, devices: hass.devices, ids: entries.map((e) => e.id) };
+    const result = { roles, holds, style, incomplete, signature, devices: hass.devices, ids: entries.map((e) => e.id) };
     cache.set(deviceId, result);
     return result;
   }
@@ -693,7 +699,7 @@
   const STATUS_RANK = { kill: 0, rearm: 1, offline: 2, check: 3, warn: 4, unknown: 5, ok: 6 };
 
   function buildModel(hass, trap, cfg, index) {
-    const t = resolveTrap(hass, trap, cfg, index);
+    const t = resolveTrap(hass, trap, cfg, index + (cfg.page_offset || 0));
     const { refs } = t;
     const reads = {};
     for (const k of ROLE_KEYS) reads[k] = readRef(hass, refs[k]);
@@ -709,6 +715,7 @@
       for (const x of [r.min, r.max]) if (isEntityId(x)) deps.push(x.trim());
     }
     const missing = Array.from(new Set(deps)).filter((e) => !(hass && hass.states && hass.states[e]));
+    const invalidRange = configured.some((k) => [refs[k].min, refs[k].max].some((v) => isEntityId(v) && !Number.isFinite(resolveNum(hass, v, NaN))));
 
     const lowRead = (k) => refs[k] && readRef(hass, normalizeRef(refs[k].low_entity));
     const m = {
@@ -787,6 +794,7 @@
     else if (m.co2.low) warnings.push("Low CO\u2082");
     if (m.stale) warnings.push("Not seen recently");
     if (m.missing.length) warnings.push("Entity not found");
+    if (invalidRange && !m.missing.length) warnings.push("Range unavailable");
     m.warnings = warnings;
 
     const noData = configured.every((k) => reads[k].missing || reads[k].unknown);
@@ -850,7 +858,7 @@
     return {
       index,
       watch: [],
-      name: name || `Trap ${index + 1}`,
+      name: name || `Trap ${index + 1 + (cfg.page_offset || 0)}`,
       location: typeof t.location === "string" ? t.location : "",
       style: TRAP_STYLES.includes(trapStyle) ? trapStyle : TRAP_STYLES.includes(cardStyle) ? cardStyle : "snap",
       configured: [],
@@ -1564,6 +1572,11 @@ ha-card { overflow: hidden; }
 :host([grid-layout]) { height: 100%; }
 :host([grid-layout]) ha-card { height: 100%; overflow: hidden auto; }
 .wrap { padding: 0 0 12px; }
+.pages { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; gap: 8px; }
+.pages button { font: inherit; color: var(--primary-text-color); background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 8px; padding: 8px; }
+.pages button:disabled { opacity: .4; }
+.pages span { font-size: 12px; }
+
 .header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; padding: 16px 16px 12px; }
 /* The same type as the headers of Home Assistant's own cards. */
 .title { display: flex; align-items: center; gap: 10px; font-family: var(--ha-card-header-font-family, inherit); font-size: var(--ha-card-header-font-size, var(--ha-font-size-2xl, 24px));
@@ -2252,6 +2265,7 @@ ha-card { overflow: hidden; }
 
     setConfig(config) {
       this._config = normalizeConfig(config);
+      this._page = 0;
       this._build();
       if (this._hass) this._update();
     }
@@ -2274,7 +2288,7 @@ ha-card { overflow: hidden; }
       const cfg = this._config;
       if (!cfg) return 9;
       const header = cfg.title || cfg.show_summary ? 2 : 0;
-      const n = cfg.traps.length;
+      const n = Math.min(cfg.traps.length, 25);
       if (!n) return header + 2;
       return header + Math.ceil(n / (maxColumns(cfg) || 1)) * (cfg.show_scene === false ? 5 : 7);
     }
@@ -2326,6 +2340,7 @@ ha-card { overflow: hidden; }
       this._endHold();
       // Whatever was waiting to be read out is old news by the time the card is back.
       clearTimeout(this._sayTimer);
+      this._sayTimer = null;
       this._saying = [];
       this._tiles.forEach((t, i) => {
         clearTimeout(t.flashTimer);
@@ -2334,6 +2349,7 @@ ha-card { overflow: hidden; }
         // Nothing times these out while the card is away, and an old prompt could still be confirmed on return.
         if (t.ui.pending || t.ui.flash) this._setUi(i, { pending: null, flash: null });
         // Re-attaching restarts CSS animations, which would play this catch again as if it were new.
+        this._cancelCount(t.el);
         this._settleFx(t);
       });
       if (this._io) {
@@ -2352,15 +2368,20 @@ ha-card { overflow: hidden; }
     }
 
     _build() {
-      const cfg = this._config;
+      const all = this._config.traps;
+      const start = (this._page || 0) * 25;
+      this._displayTraps = all.slice(start, start + 25);
+      const cfg = { ...this._config, traps: this._displayTraps, page_offset: (this._page || 0) * 25 };
       const showHeader = !!cfg.title || cfg.show_summary;
       // A hold, a prompt or a flash belongs to the old tiles: its trap may now be somewhere else, or gone.
       this._endHold();
       this._tiles.forEach((t) => {
         clearTimeout(t.flashTimer);
         clearTimeout(t.pendingTimer);
+        this._cancelCount(t.el);
       });
       clearTimeout(this._sayTimer);
+      this._sayTimer = null;
       this._saying = [];
       // Headings and a list give screen readers a way to jump from trap to trap. The status region is always there,
       // summary or not: a region added at the moment it has something to say is often not read out.
@@ -2373,6 +2394,11 @@ ha-card { overflow: hidden; }
               ${cfg.title ? `<div class="title" role="heading" aria-level="2">${ICONS.mouseHead}<span>${esc(cfg.title)}</span></div>` : `<div class="title"></div>`}
               ${cfg.show_summary ? `<div class="summary"></div>` : ""}
             </div>` : ""}
+            ${all.length > 25 ? `<div class="pages" role="group" aria-label="Trap pages">
+              <button type="button" data-page="-1" ${start === 0 ? "disabled" : ""}>Previous</button>
+              <span>Traps ${start + 1}-${Math.min(start + 25, all.length)} of ${all.length}. Summary for this page.</span>
+              <button type="button" data-page="1" ${start + 25 >= all.length ? "disabled" : ""}>Next</button>
+            </div>` : ""}
             <div class="grid" role="list"></div>
             <div class="sr-only" role="status"></div>`;
       // Only the inside of <ha-card> is replaced: what else is in the shadow root (card-mod's styles) stays.
@@ -2382,6 +2408,13 @@ ha-card { overflow: hidden; }
       this._grid = wrap.querySelector(".grid");
       this._summary = wrap.querySelector(".summary");
       this._live = wrap.querySelector(".sr-only");
+      wrap.querySelectorAll("[data-page]").forEach((button) => button.addEventListener("click", () => {
+        this._page += Number(button.dataset.page);
+        this._build();
+        if (this._hass) this._update();
+        const next = this._root.querySelector(`[data-page="${button.dataset.page}"]:not(:disabled)`) || this._root.querySelector("[data-page]:not(:disabled)");
+        if (next) next.focus({ preventScroll: true });
+      }));
       const cols = maxColumns(cfg);
       if (cols) {
         this._grid.classList.add("max-cols");
@@ -2427,7 +2460,7 @@ ha-card { overflow: hidden; }
     }
 
     _update(force = false) {
-      const cfg = this._config;
+      const cfg = { ...this._config, traps: this._displayTraps, page_offset: (this._page || 0) * 25 };
       if (!this._grid) return;
       const hass = this._hass;
       const states = hass.states || {};
@@ -2468,6 +2501,7 @@ ha-card { overflow: hidden; }
           newStrike: !!(prev && prev.lastStrike && m.lastStrike && Date.parse(m.lastStrike) > Date.parse(prev.lastStrike)),
         };
         if (!m.error && m.scene !== "offline" && m.scene !== "idle") tile.live = m.scene;
+        if (!prev || prev.strikes !== m.strikes) this._cancelCount(tile.el);
         tile.model = m;
         this._paint(i, flags);
         if (flags.strikesFrom !== null) this._countUp(tile.el);
@@ -2510,7 +2544,7 @@ ha-card { overflow: hidden; }
         parts = renderTile(m, this._config, this._effects(tile, m, flags), tile.ui);
         if (!m.error) tile.error = null;
       } catch (e) {
-        m = tile.model = this._failed(tile, this._config.traps[i], i, e);
+        m = tile.model = this._failed(tile, this._displayTraps[i], i, e);
         parts = renderTile(m, this._config, NO_FLAGS, EMPTY_UI);
       }
       // Painting stays synchronous: callers focus what they just drew (the confirm button, say).
@@ -2573,12 +2607,13 @@ ha-card { overflow: hidden; }
      */
     _say(messages) {
       if (!messages.length || !this._live) return;
-      this._saying = (this._saying || []).concat(messages);
-      clearTimeout(this._sayTimer);
+      this._saying = Array.from(new Set((this._saying || []).concat(messages))).slice(-100);
+      if (this._sayTimer) return;
       this._live.textContent = "";
       this._sayTimer = setTimeout(() => {
         if (this._live) this._live.textContent = this._saying.join(". ");
         this._saying = [];
+        this._sayTimer = null;
       }, 150);
     }
 
@@ -2658,7 +2693,7 @@ ha-card { overflow: hidden; }
 
     /** One trap failed: log it (once per distinct error), show it on its tile and try again on the next update. */
     _failed(tile, trap, i, e) {
-      const m = errorModel(trap, this._config, i, e);
+      const m = errorModel(trap, { ...this._config, page_offset: (this._page || 0) * 25 }, i, e);
       if (tile.error !== m.error) console.error(`Rodent Trap Card: trap ${i + 1} (${m.name})`, e);
       tile.error = m.error;
       tile.seen = null;
@@ -2676,7 +2711,16 @@ ha-card { overflow: hidden; }
       return list;
     }
 
+    _cancelCount(tileEl) {
+      const run = tileEl._countRun;
+      if (!run) return;
+      cancelAnimationFrame(run.frame);
+      run.el.textContent = run.final;
+      tileEl._countRun = null;
+    }
+
     _countUp(tileEl) {
+      this._cancelCount(tileEl);
       const el = tileEl.querySelector(".count[data-count-from]");
       if (!el || this._config.animations === false || reducedMotion()) return;
       const from = Number(el.dataset.countFrom);
@@ -2684,20 +2728,24 @@ ha-card { overflow: hidden; }
       if (!(to > from) || !Number.isInteger(to) || to - from > 500) return;
       const final = el.textContent;
       const start = performance.now();
+      const run = { el, final, frame: null };
+      tileEl._countRun = run;
       // One clock for start and progress: a frame timestamp can be older than `start` (DevTools slow motion, for
       // one), which would count far below `from`.
       const step = () => {
+        if (tileEl._countRun !== run) return;
         const p = Math.min(1, Math.max(0, (performance.now() - start) / 900));
         // A tile taken off the page part-way shows the final count, not wherever the count had got to.
         if (p >= 1 || !el.isConnected) {
           el.textContent = final;
+          tileEl._countRun = null;
           return;
         }
         el.textContent = String(Math.round(from + (to - from) * (1 - Math.pow(1 - p, 3))));
-        requestAnimationFrame(step);
+        run.frame = requestAnimationFrame(step);
       };
       el.textContent = String(from);
-      requestAnimationFrame(step);
+      run.frame = requestAnimationFrame(step);
     }
 
     /**
@@ -3212,22 +3260,26 @@ ha-card { overflow: hidden; }
   function loadHaForm() {
     if (customElements.get("ha-form")) return Promise.resolve(true);
     if (!haFormPromise) {
-      haFormPromise = (async () => {
-        try {
-          // Built-in card editors pull in ha-form and its selectors; borrow one to load them.
-          const helpers = window.loadCardHelpers ? await window.loadCardHelpers() : null;
-          if (helpers) {
-            helpers.createCardElement({ type: "tile", entity: "sun.sun" });
-            await customElements.whenDefined("hui-tile-card");
-            const Tile = customElements.get("hui-tile-card");
-            if (Tile && Tile.getConfigElement) await Tile.getConfigElement();
-          }
-        } catch (e) {
-          /* fall through to the timeout below */
+      let timer;
+      const attempt = (async () => {
+        const helpers = window.loadCardHelpers ? await window.loadCardHelpers() : null;
+        if (helpers) {
+          helpers.createCardElement({ type: "tile", entity: "sun.sun" });
+          await customElements.whenDefined("hui-tile-card");
+          const Tile = customElements.get("hui-tile-card");
+          if (Tile && Tile.getConfigElement) await Tile.getConfigElement();
         }
-        await Promise.race([customElements.whenDefined("ha-form"), new Promise((r) => setTimeout(r, 5000))]);
-        return !!customElements.get("ha-form");
+        await customElements.whenDefined("ha-form");
+        return true;
       })();
+      haFormPromise = Promise.race([
+        attempt,
+        new Promise((resolve) => { timer = setTimeout(() => resolve(false), 5000); }),
+      ]).catch(() => false).then((ok) => {
+        clearTimeout(timer);
+        if (!ok) haFormPromise = null;
+        return ok;
+      });
     }
     return haFormPromise;
   }
@@ -3297,7 +3349,12 @@ ha-card { overflow: hidden; }
         this._ready = ok;
         this._failed = !ok;
         this._structure = null;
-        this._render();
+        if (this.isConnected) this._render();
+      }).catch(() => {
+        this._ready = false;
+        this._failed = true;
+        this._structure = null;
+        if (this.isConnected) this._render();
       });
     }
 
@@ -3312,6 +3369,9 @@ ha-card { overflow: hidden; }
       if (!config || typeof config !== "object") throw new Error("Invalid configuration");
       const traps = config.traps;
       if (traps !== undefined && traps !== null && !Array.isArray(traps)) throw new Error("`traps` must be a list.");
+      if (Array.isArray(traps)) traps.forEach((t, i) => {
+        if (!t || typeof t !== "object" || Array.isArray(t)) throw new Error(`traps[${i}] must be a mapping of options.`);
+      });
       const next = { ...config };
       if (!Array.isArray(traps)) {
         // The single-trap form becomes one entry under `traps:`, so the first edit doesn't write `traps: []` and
@@ -3513,7 +3573,13 @@ ha-card { overflow: hidden; }
       // Buttons: keep object-form entries (names, icons, confirm) for entities still selected, and any service-only entries.
       const picked = Array.isArray(value.actions) ? value.actions : [];
       const objects = (Array.isArray(original.actions) ? original.actions : []).filter((a) => a && typeof a === "object");
-      const actions = picked.map((id) => objects.find((o) => o.entity === id) || id).concat(objects.filter((o) => !o.entity));
+      const before = this._trapData(original).actions || [];
+      const unchanged = picked.length === before.length && picked.every((id, n) => id === before[n]);
+      const remaining = objects.slice();
+      const actions = unchanged ? (original.actions || []).slice() : picked.map((id) => {
+        const n = remaining.findIndex((o) => o.entity === id);
+        return n < 0 ? id : remaining.splice(n, 1)[0];
+      }).concat(objects.filter((o) => !o.entity));
       if (actions.length) trap.actions = actions;
       else delete trap.actions;
 
